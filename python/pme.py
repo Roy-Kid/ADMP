@@ -342,7 +342,7 @@ def pme_self(Q, lmax, kappa):
     factor = kappa/np.sqrt(np.pi) * (2*kappa*kappa)**l_list / l_fac2
     return - np.sum(factor * Q**2) * dielectric
 
-def pme_reciprocel(positions, box, Q, lmax, kappa, N):
+def pme_reciprocal(positions, box, Q, lmax, kappa, N):
     
     padder = np.arange(-3, 3)
     shifts = np.array(np.meshgrid(padder, padder, padder)).T.reshape((1, 216, 3))
@@ -691,8 +691,9 @@ def pme_reciprocel(positions, box, Q, lmax, kappa, N):
     
     Nj_Aji_star = get_recip_vectors(N, box)
     m_u0, u0 = u_reference(positions, Nj_Aji_star)
-    sph_harms = sph_harmonics_GO(u0, Nj_Aji_star)
+    sph_harms = sph_harmonics_GO(u0, Nj_Aji_star, lmax)
     Q_mesh_pera = Q_m_peratom(Q, sph_harms)
     Q_mesh = Q_mesh_on_m(Q_mesh_pera, m_u0, N)
     
-    return E_recip_on_grid(Q_mesh, box, N, kappa)
+    # Outputs energy in OPENMM units    
+    return E_recip_on_grid(Q_mesh, box, N, kappa)*dielectric
