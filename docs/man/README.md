@@ -1,8 +1,14 @@
 ---
 title: 快速开始
 date: 2021-08-24
+categories:
+ - manual
+tags:
+ - tutorial
 sidebar: 'auto'
 ---
+
+# 快速开始
 
 项目根目录下有多个子文件夹:
 
@@ -25,12 +31,10 @@ sidebar: 'auto'
 在未接入积分器的版本中, pdb/xml文件的读取由`read_mpid_inputs()`进行, 经过处理之后传给`ADMPForce`. `ADMPForce`接收到参数之后, 首先要调用`update()`方法计算动态的参数(与位置有关的临近表, kappa及K矢, frame转换等), 再调用`calc_real_space_energy()`等计算能量. 
 
 ```python
-
 force = generator.create_force()
 force.update()
 print(force.kappa) # 0.32
 print(force.calc_real_space_energy()) # 878.869
-
 ```
 
 ## 测试构建

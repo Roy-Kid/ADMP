@@ -6,12 +6,17 @@
   "repository": "https://github.com/Roy-Kid/ADMP.git",
   "author": "Roy Kid <lijichen365@126.com>",
   "license": "MIT",
-
   "devDependencies": {
-    "vuepress": "^2.0.0-beta.24"
+    "vuepress": "^1.8.2"
   },
   "scripts": {
     "dev": "vuepress dev docs",
     "build": "vuepress build docs"
+  },
+  "dependencies": {
+    "markdown-it-imsize": "^2.0.1",
+    "markdown-it-katex": "^2.0.3",
+    "vuepress-plugin-code-switcher": "^1.1.0",
+    "vuepress-theme-reco": "^1.6.6"
   }
 }
