@@ -10,7 +10,7 @@ from simtk.openmm import *
 from simtk.unit import *
 from .neighborList import construct_nblist
 from .utils import *
-from .pme import pme_real, pme_self
+from .pme import pme_real, pme_reciprocel, pme_self
 import mpidplugin
 
 # see the python/mpidplugin.i code 
@@ -301,10 +301,12 @@ class ADMPForce(ADMPBaseForce):
         super().__init__()
     
     def calc_real_space_energy(self):
-        return pme_real(self.positions, self.box, self.Q, 2, self.box_inv, self.mpid_params['polarizabilities'], self.rc, self.kappa, self.mpid_params['covalent_map'], self.mScales, self.pScales, self.dScales, self.neighlist)
+        return pme_real(self.positions, self.box, self.Q, self.lmax, self.box_inv, self.mpid_params['polarizabilities'], self.rc, self.kappa, self.mpid_params['covalent_map'], self.mScales, self.pScales, self.dScales, self.neighlist)
     
     def calc_self_energy(self):
         return pme_self(self.Q, self.lmax, self.kappa)
     
     def calc_reciprocal_space_energy(self):
-        pass
+        N = np.array([self.K1, self.K2, self.K3])
+        Q = self.Q[:, :(self.lmax+1)**2].reshape(Q.shape[0], (self.lmax+1)**2)
+        return pme_reciprocel(self.positions, self.box, Q, self.lmax, self.kappa, N)
