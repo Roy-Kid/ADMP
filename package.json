@@ -1,0 +1,17 @@
+{
+  "name": "ADMP",
+  "version": "0.0.1",
+  "description": "Automatic Differentiation Multipole Moment Molecular Forcefield",
+  "main": "index.js",
+  "repository": "https://github.com/Roy-Kid/ADMP.git",
+  "author": "Roy Kid <lijichen365@126.com>",
+  "license": "MIT",
+  
+  "devDependencies": {
+    "vuepress": "^2.0.0-beta.24"
+  },
+  "scripts": {
+    "dev": "vuepress dev docs",
+    "build": "vuepress build docs"
+  },
+}

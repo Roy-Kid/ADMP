@@ -2,6 +2,9 @@
 __pycache__/
 *.py[cod]
 *$py.class
+node_modules
+yarn-error.log
+yarn.lock
 
 # C extensions
 *.so
@@ -127,3 +130,5 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+.temp
+.cache
