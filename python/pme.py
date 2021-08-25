@@ -585,8 +585,9 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
         if lmax > 2:
             raise NotImplementedError('l > 2 (beyond quadrupole) not supported')
         
-        Q_dbf = Q
+        Q_dbf = np.empty_like(Q)
         
+        Q_dbf[:, 0] = Q[:, 0]
         if lmax >= 1:
             Q_dbf[:,1:4] = Q[:,1:4] 
         if lmax >= 2:
