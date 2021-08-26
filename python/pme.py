@@ -608,7 +608,7 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
             Q_mesh: 
                 Nx * Ny * Nz matrix
         """
-        Q_mesh = np.zeros((N[0], N[1], N[2]))
+        Q_mesh = np.zeros((int(N[0]), int(N[1]), int(N[2])))
         for ai in range(m_u0.shape[0]):
             for i in range(shifts[0].shape[0]):
                 shift = shifts[0, i]
