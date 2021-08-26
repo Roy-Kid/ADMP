@@ -260,7 +260,7 @@ class ADMPGenerator:
         force.pScales = self.pScales
         force.dScales = self.dScales
         force.box = self.box
-        
+        force.lmax = 2
         return force
 
 
@@ -276,7 +276,7 @@ class ADMPBaseForce:
         self.kappa, self.K1, self.K2, self.K3 = setup_ewald_parameters(self.rc, self.ethresh, self.box)
         
     def get_mtpls_global(self):
-        self.Q, self.local_frames = get_mtpls_global(box = self.box, positions = self.positions, params=self.mpid_params)
+        self.Q, self.local_frames = get_mtpls_global(box = self.box, positions = self.positions, params=self.mpid_params, lmax=self.lmax)
 
 
     def update(self, positions=None, box=None, ):
@@ -306,7 +306,7 @@ class ADMPForce(ADMPBaseForce):
     def calc_self_energy(self):
         return pme_self(self.Q, self.lmax, self.kappa)
     
-    def calc_reciprocal_space_energy(self):
+    def calc_reci_space_energy(self):
         N = np.array([self.K1, self.K2, self.K3])
         Q = self.Q[:, :(self.lmax+1)**2].reshape(self.Q.shape[0], (self.lmax+1)**2)
         return pme_reciprocal(self.positions, self.box, Q, self.lmax, self.kappa, N)

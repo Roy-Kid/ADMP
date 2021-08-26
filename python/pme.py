@@ -336,9 +336,8 @@ def pme_self(Q, lmax, kappa):
         l_list = np.concatenate((l_list, np.ones(2*l+1, dtype=np.int64)*l))
         tmp *= (2*l + 1)
         l_fac2 = np.concatenate((l_fac2, np.ones(2*l+1, dtype=np.int64)*tmp))
-    # l_list = np.tile(l_list, (n_atoms, 1))
+
     l_list = np.repeat(l_list, n_atoms).reshape((-1, n_atoms)).T
-    # l_fac2 = np.tile(l_fac2, (n_atoms, 1))
     l_fac2 = np.repeat(l_fac2, n_atoms).reshape((-1, n_atoms)).T
     factor = kappa/np.sqrt(np.pi) * (2*kappa*kappa)**l_list / l_fac2
     return - np.sum(factor * Q**2) * dielectric
