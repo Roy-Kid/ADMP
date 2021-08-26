@@ -1,6 +1,7 @@
 from math import erf
 
-import numpy as np
+from jax import grad
+import jax.numpy as np
 
 from .utils import rot_global2local
 
