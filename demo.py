@@ -34,10 +34,12 @@ force.update()
 force.kappa = 0.328532611
 
 # test reci_space_energy
-reci_e = force.calc_reci_space_energy()
-print('reciprocal', reci_e)
-# reci_f = force.calc_reci_space_force()
-# print('reciprocal', reci_f)
+# reci_e = force.calc_reci_space_energy()
+# print('reciprocal', reci_e)
+reci_f = force.calc_reci_space_force()
+print('reciprocal', reci_f)
+
+
 
 # test real_space_energy
 # real_e = force.calc_real_space_energy()

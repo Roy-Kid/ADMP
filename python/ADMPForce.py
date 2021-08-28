@@ -1,6 +1,7 @@
 # date: 2021-08-24
 # version: 0.0.1
 
+from jax.test_util import check_grads
 import numpy as np
 import re
 from scipy.sparse import csr_matrix
@@ -314,4 +315,5 @@ class ADMPForce(ADMPBaseForce):
     def calc_reci_space_force(self):
         N = np.array([self.K1, self.K2, self.K3])
         Q = self.Q[:, :(self.lmax+1)**2].reshape(self.Q.shape[0], (self.lmax+1)**2)
+        check_grads(pme_reciprocal, (self.positions, self.box, Q, self.lmax, self.kappa, N), order = 1)
         return pme_reciprocal_force(self.positions, self.box, Q, self.lmax, self.kappa, N)
