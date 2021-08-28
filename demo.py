@@ -33,26 +33,28 @@ force = generator.create_force()
 force.update()
 force.kappa = 0.328532611
 
-# test real_space_energy
-real_e = force.calc_real_space_energy()
-
 # test reci_space_energy
 reci_e = force.calc_reci_space_energy()
-
-# test self energy
-self_e = force.calc_self_energy()
-
-
-print('real space', real_e)
 print('reciprocal', reci_e)
-print('self', self_e)
+# reci_f = force.calc_reci_space_force()
+# print('reciprocal', reci_f)
 
-pdb = PDBFile(pdb)
-forcefield = ForceField(xml)
-system = forcefield.createSystem(pdb.topology, nonbondedMethod=LJPME, nonbondedCutoff=8*angstrom, constraints=HBonds, defaultTholeWidth=8)
-integrator = VerletIntegrator(1e-10*femtoseconds)
-simulation = Simulation(pdb.topology, system, integrator)
-context = simulation.context
-context.setPositions(positions*angstrom)
-state = context.getState(getEnergy=True, getPositions=True)
-Etot = state.getPotentialEnergy().value_in_unit(kilojoules_per_mole)
+# test real_space_energy
+# real_e = force.calc_real_space_energy()
+
+# # test self energy
+# self_e = force.calc_self_energy()
+
+
+# print('real space', real_e)
+# print('self', self_e)
+
+# pdb = PDBFile(pdb)
+# forcefield = ForceField(xml)
+# system = forcefield.createSystem(pdb.topology, nonbondedMethod=LJPME, nonbondedCutoff=8*angstrom, constraints=HBonds, defaultTholeWidth=8)
+# integrator = VerletIntegrator(1e-10*femtoseconds)
+# simulation = Simulation(pdb.topology, system, integrator)
+# context = simulation.context
+# context.setPositions(positions*angstrom)
+# state = context.getState(getEnergy=True, getPositions=True)
+# Etot = state.getPotentialEnergy().value_in_unit(kilojoules_per_mole)

@@ -10,7 +10,7 @@ from simtk.openmm import *
 from simtk.unit import *
 from .neighborList import construct_nblist
 from .utils import *
-from .pme import pme_real, pme_reciprocal, pme_self
+from .pme import pme_real, pme_reciprocal, pme_self, pme_reciprocal_force
 import mpidplugin
 
 # see the python/mpidplugin.i code 
@@ -172,7 +172,7 @@ def read_mpid_inputs(pdb, xml):
     system = forcefield.createSystem(pdb.topology, nonbondedMethod=LJPME, defaultTholeWidth=5)
 
     generators = {}
-    print([i.__repr__() for i in forcefield.getGenerators()])
+    # print([i.__repr__() for i in forcefield.getGenerators()])
     for force_gen in forcefield.getGenerators():
         generator_name = re.search('.([A-Za-z]+) +object', force_gen.__repr__()).group(1)
         generators[generator_name] = force_gen
@@ -310,3 +310,8 @@ class ADMPForce(ADMPBaseForce):
         N = np.array([self.K1, self.K2, self.K3])
         Q = self.Q[:, :(self.lmax+1)**2].reshape(self.Q.shape[0], (self.lmax+1)**2)
         return pme_reciprocal(self.positions, self.box, Q, self.lmax, self.kappa, N)
+    
+    def calc_reci_space_force(self):
+        N = np.array([self.K1, self.K2, self.K3])
+        Q = self.Q[:, :(self.lmax+1)**2].reshape(self.Q.shape[0], (self.lmax+1)**2)
+        return pme_reciprocal_force(self.positions, self.box, Q, self.lmax, self.kappa, N)

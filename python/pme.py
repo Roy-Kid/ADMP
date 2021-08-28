@@ -1,7 +1,10 @@
 from math import erf
+import jax
+import numpy as np
+import jax.numpy as jnp
 
-from jax import grad
-import jax.numpy as np
+from jax.config import config
+config.update("jax_enable_x64", True)
 
 from .utils import rot_global2local
 
@@ -28,7 +31,7 @@ def calc_ePermCoef(mscales, kappa, dr):
 
     prefactor = dielectric
     
-    rInvVec = np.array([prefactor/dr**i for i in range(0, 9)])
+    rInvVec = jnp.array([prefactor/dr**i for i in range(0, 9)])
     assert (rInvVec[1] == prefactor / dr).all()
     
     alphaRVec = np.array([(kappa*dr)**i for i in range(0, 10)])
@@ -344,8 +347,8 @@ def pme_self(Q, lmax, kappa):
 
 def pme_reciprocal(positions, box, Q, lmax, kappa, N):
     
-    padder = np.arange(-3, 3)
-    shifts = np.array(np.meshgrid(padder, padder, padder)).T.reshape((1, 216, 3))
+    padder = jnp.arange(-3, 3)
+    shifts = jnp.array(jnp.meshgrid(padder, padder, padder)).T.reshape((1, 216, 3))
     
     def get_recip_vectors(N, box):
         """
@@ -362,7 +365,7 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
                 3 x 3 matrix, the first index denotes reciprocal lattice vector, the second index is the component xyz.
                 (lattice vectors arranged in rows)
         """
-        Nj_Aji_star = (N.reshape((1, 3)) * np.linalg.inv(box)).T
+        Nj_Aji_star = (N.reshape((1, 3)) * jnp.linalg.inv(box)).T
         return Nj_Aji_star
 
     def u_reference(R_a, Nj_Aji_star):
@@ -383,10 +386,9 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
                 N_a * 3 matrix, (R_a - R_m)*a_star values
         """
         
-        R_in_m_basis =  np.einsum("ij,kj->ki", Nj_Aji_star, R_a)
+        R_in_m_basis =  jnp.einsum("ij,kj->ki", Nj_Aji_star, R_a)
         
-        m_u0 = np.empty_like(R_in_m_basis, dtype=np.int32)
-        np.ceil(R_in_m_basis, m_u0, casting='unsafe')
+        m_u0 = jnp.ceil(R_in_m_basis).astype(int)
         
         u0 = (m_u0 - R_in_m_basis) + 6/2
         return m_u0, u0
@@ -395,13 +397,13 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
         """
         Computes the cardinal B-spline function
         """
-        return np.piecewise(u, 
-                            [np.logical_and(u>=0, u<1.), 
-                            np.logical_and(u>=1, u<2.), 
-                            np.logical_and(u>=2, u<3.), 
-                            np.logical_and(u>=3, u<4.), 
-                            np.logical_and(u>=4, u<5.), 
-                            np.logical_and(u>=5, u<6.)],
+        return jnp.piecewise(u, 
+                            [jnp.logical_and(u>=0, u<1.), 
+                            jnp.logical_and(u>=1, u<2.), 
+                            jnp.logical_and(u>=2, u<3.), 
+                            jnp.logical_and(u>=3, u<4.), 
+                            jnp.logical_and(u>=4, u<5.), 
+                            jnp.logical_and(u>=5, u<6.)],
                             [lambda u: u**5/120,
                             lambda u: u**5/120 - (u - 1)**5/20,
                             lambda u: u**5/120 + (u - 2)**5/8 - (u - 1)**5/20,
@@ -413,13 +415,13 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
         """
         Computes first derivative of the cardinal B-spline function
         """
-        return np.piecewise(u, 
-                            [np.logical_and(u>=0., u<1.), 
-                            np.logical_and(u>=1., u<2.), 
-                            np.logical_and(u>=2., u<3.), 
-                            np.logical_and(u>=3., u<4.), 
-                            np.logical_and(u>=4., u<5.), 
-                            np.logical_and(u>=5., u<6.)],
+        return jnp.piecewise(u, 
+                            [jnp.logical_and(u>=0., u<1.), 
+                            jnp.logical_and(u>=1., u<2.), 
+                            jnp.logical_and(u>=2., u<3.), 
+                            jnp.logical_and(u>=3., u<4.), 
+                            jnp.logical_and(u>=4., u<5.), 
+                            jnp.logical_and(u>=5., u<6.)],
                             [lambda u: u**4/24,
                             lambda u: u**4/24 - (u - 1)**4/4,
                             lambda u: u**4/24 + 5*(u - 2)**4/8 - (u - 1)**4/4,
@@ -431,13 +433,13 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
         """
         Computes second derivate of the cardinal B-spline function
         """
-        return np.piecewise(u, 
-                            [np.logical_and(u>=0., u<1.), 
-                            np.logical_and(u>=1., u<2.), 
-                            np.logical_and(u>=2., u<3.), 
-                            np.logical_and(u>=3., u<4.), 
-                            np.logical_and(u>=4., u<5.), 
-                            np.logical_and(u>=5., u<6.)],
+        return jnp.piecewise(u, 
+                            [jnp.logical_and(u>=0., u<1.), 
+                            jnp.logical_and(u>=1., u<2.), 
+                            jnp.logical_and(u>=2., u<3.), 
+                            jnp.logical_and(u>=3., u<4.), 
+                            jnp.logical_and(u>=4., u<5.), 
+                            jnp.logical_and(u>=5., u<6.)],
                             [lambda u: u**3/6,
                             lambda u: u**3/6 - (u - 1)**3,
                             lambda u: 5*u**3/3 - 12*u**2 + 27*u - 19,
@@ -458,7 +460,7 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
             theta:
                 ... matrix
         """
-        theta = np.prod(bspline6(u), axis = -1)
+        theta = jnp.prod(bspline6(u), axis = -1)
         return theta
 
     def thetaprime_eval(u, Nj_Aji_star, theta):
@@ -476,11 +478,16 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
         """
 
         M_u = bspline6(u)
-        M_u[M_u == 0] = np.inf
+        Mprime_u = bspline6prime(u)
+        div = jnp.array([
+            Mprime_u[:, 0] * M_u[:, 1] * M_u[:, 2],
+            Mprime_u[:, 1] * M_u[:, 2] * M_u[:, 0],
+            Mprime_u[:, 2] * M_u[:, 0] * M_u[:, 1],
+        ]).T
         
         # Notice that u = m_u0 - R_in_m_basis + 6/2
         # therefore the Jacobian du_j/dx_i = - Nj_Aji_star
-        return np.einsum("ij,kj->ki", -Nj_Aji_star, theta.reshape((-1, 1)) * bspline6prime(u)/M_u)
+        return jnp.einsum("ij,kj->ki", -Nj_Aji_star, div)
 
     def theta2prime_eval(u, Nj_Aji_star):
         """
@@ -497,22 +504,27 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
         Mprime_u = bspline6prime(u)
         M2prime_u = bspline6prime2(u)
 
-        div = np.empty((u.shape[0], 3, 3))
+        div_00 = M2prime_u[:, 0] * M_u[:, 1] * M_u[:, 2]
+        div_11 = M2prime_u[:, 1] * M_u[:, 0] * M_u[:, 2]
+        div_22 = M2prime_u[:, 2] * M_u[:, 0] * M_u[:, 1]
+        
+        div_01 = Mprime_u[:, 0] * Mprime_u[:, 1] * M_u[:, 2]
+        div_02 = Mprime_u[:, 0] * Mprime_u[:, 2] * M_u[:, 1]
+        div_12 = Mprime_u[:, 1] * Mprime_u[:, 2] * M_u[:, 0]
 
-        div[:, 0, 0] = M2prime_u[:, 0] * M_u[:, 1] * M_u[:, 2]
-        div[:, 1, 1] = M2prime_u[:, 1] * M_u[:, 0] * M_u[:, 2]
-        div[:, 2, 2] = M2prime_u[:, 2] * M_u[:, 0] * M_u[:, 1]
-
-        div[:, 0, 1] = Mprime_u[:, 0] * Mprime_u[:, 1] * M_u[:, 2]
-        div[:, 0, 2] = Mprime_u[:, 0] * Mprime_u[:, 2] * M_u[:, 1]
-        div[:, 1, 2] = Mprime_u[:, 1] * Mprime_u[:, 2] * M_u[:, 0]
-        div[:, 1, 0] = div[:, 0, 1]
-        div[:, 2, 0] = div[:, 0, 2]
-        div[:, 2, 1] = div[:, 1, 2]
+        div_10 = div_01
+        div_20 = div_02
+        div_21 = div_12
+        
+        div = jnp.array([
+            [div_00, div_01, div_02],
+            [div_10, div_11, div_12],
+            [div_20, div_21, div_22],
+        ]).swapaxes(0, 2)
         
         # Notice that u = m_u0 - R_in_m_basis + 6/2
         # therefore the Jacobian du_j/dx_i = - Nj_Aji_star
-        return np.einsum("im,jn,kmn->kij", -Nj_Aji_star, -Nj_Aji_star, div)
+        return jnp.einsum("im,jn,kmn->kij", -Nj_Aji_star, -Nj_Aji_star, div)
 
     def sph_harmonics_GO(u0, Nj_Aji_star, lmax):
         '''
@@ -538,30 +550,33 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
         n_harm = (lmax + 1)**2
 
         N_a = u0.shape[0]
-        u = (u0[:, np.newaxis, :] + shifts).reshape((N_a*216, 3)) 
+        u = (u0[:, jnp.newaxis, :] + shifts).reshape((N_a*216, 3)) 
 
-        harmonics = np.zeros((N_a*216, n_harm))
-        
         theta = theta_eval(u)
-        harmonics[:, 0] = theta
+        harmonics = theta
         
         if lmax >= 1:
             # dipole
             thetaprime = thetaprime_eval(u, Nj_Aji_star, theta)
-            harmonics[:, 1] = thetaprime[:, 2]
-            harmonics[:, 2] = thetaprime[:, 0]
-            harmonics[:, 3] = thetaprime[:, 1]
+            harmonics = jnp.stack(
+                [harmonics,
+                thetaprime[:, 2],
+                thetaprime[:, 0],
+                thetaprime[:, 1]],
+                axis = -1
+            )
         if lmax >= 2:
             # quadrapole
             theta2prime = theta2prime_eval(u, Nj_Aji_star)
-            rt3 = np.sqrt(3)
-            harmonics[:, 4] = (3*theta2prime[:,2,2] - np.trace(theta2prime, axis1=1, axis2=2)) / 2
-            harmonics[:, 5] = rt3 * theta2prime[:, 0, 2]
-            harmonics[:, 6] = rt3 * theta2prime[:, 1, 2]
-            harmonics[:, 7] = rt3/2 * (theta2prime[:, 0, 0] - theta2prime[:, 1, 1])
-            harmonics[:, 8] = rt3 * theta2prime[:, 0, 1]
-        
-        harmonics = harmonics.reshape(N_a, 216, n_harm)
+            rt3 = jnp.sqrt(3)
+            harmonics = jnp.hstack(
+                [harmonics,
+                jnp.stack([(3*theta2prime[:,2,2] - jnp.trace(theta2prime, axis1=1, axis2=2)) / 2,
+                rt3 * theta2prime[:, 0, 2],
+                rt3 * theta2prime[:, 1, 2],
+                rt3/2 * (theta2prime[:, 0, 0] - theta2prime[:, 1, 1]),
+                rt3 * theta2prime[:, 0, 1]], axis = 1)]
+            )
 
         return harmonics.reshape(N_a, 216, n_harm)
 
@@ -584,20 +599,18 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
         
         if lmax > 2:
             raise NotImplementedError('l > 2 (beyond quadrupole) not supported')
-        
-        Q_dbf = np.empty_like(Q)
-        
-        Q_dbf[:, 0] = Q[:, 0]
+
+        Q_dbf = Q[:, 0]
         if lmax >= 1:
-            Q_dbf[:,1:4] = Q[:,1:4] 
+            Q_dbf = jnp.hstack([Q_dbf[:,jnp.newaxis], Q[:,1:4]])
         if lmax >= 2:
-            Q_dbf[:,4:9] = Q[:,4:9] / 3
+            Q_dbf = jnp.hstack([Q_dbf, Q[:,4:9]/3])
         
-        Q_m_pera = np.sum( Q_dbf[:,np.newaxis,:]* sph_harms, axis=2)
+        Q_m_pera = jnp.sum( Q_dbf[:,jnp.newaxis,:]* sph_harms, axis=2)
 
         assert Q_m_pera.shape == (N_a, 216)
         return Q_m_pera
-
+    
     def Q_mesh_on_m(Q_mesh_pera, m_u0, N):
         """
         spreads the particle mesh onto the grid
@@ -609,15 +622,35 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
             Q_mesh: 
                 Nx * Ny * Nz matrix
         """
-        Q_mesh = np.zeros((N[0], N[1], N[2]))
-        for ai in range(m_u0.shape[0]):
-            for i in range(shifts[0].shape[0]):
-                shift = shifts[0, i]
-                shift = shift.reshape(3)
-                indices = np.mod(m_u0[ai] + shift, N)
-                Q_mesh[indices[0], indices[1], indices[2]] += Q_mesh_pera[ai, i]
-
+        indices_arr = jnp.mod(m_u0[:,np.newaxis,:]+shifts, N[np.newaxis, np.newaxis, :])
+        
+        # def acc(ai, i):
+        #     indices = indices_arr[ai, i]
+        #     Q_mesh[indices[0], indices[1], indices[2]] += Q_mesh_pera[ai, i]
+        
+        Q_mesh = jnp.zeros((N[0], N[1], N[2]))
+        for ai in range(indices_arr.shape[0]):
+            for i in range(indices_arr.shape[1]):
+                indices = indices_arr[ai, i]
+                Q_mesh = Q_mesh.at[indices[0], indices[1], indices[2]].add(Q_mesh_pera[ai, i])
         return Q_mesh
+    
+    # @Q_mesh_on_m.defjvp
+    # def Q_mesh_on_m_jvp(primals, tangents):
+    #     Q_mesh_pera, m_u0, N = primals
+    #     Q_mesh_pera_dot, m_u0_dot, N_dot = tangents
+        
+    #     primal_out = Q_mesh_on_m(Q_mesh_pera, m_u0, N)
+    #     tangent_out = jnp.zeros((N[0], N[1], N[2]))
+    #     for ai in range(m_u0.shape[0]):
+    #         for i in range(shifts[0].shape[0]):
+    #             shift = shifts[0, i]
+    #             shift = shift.reshape(3)
+    #             indices = jnp.mod(m_u0[ai] + shift, N)
+    #             print(Q_mesh_pera_dot[ai,i])
+    #             tangent_out = tangent_out.at[indices[0], indices[1], indices[2]].add(Q_mesh_pera_dot[ai, i])
+
+    #     return primal_out, tangent_out
 
     def setup_kpts_integer(N):
         """
@@ -627,11 +660,11 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
         """
         N_half = N.reshape(3)
 
-        kx, ky, kz = [np.roll(np.arange(- (N_half[i] - 1) // 2, (N_half[i] + 1) // 2 ), - (N_half[i] - 1) // 2) for i in range(3)]
+        kx, ky, kz = [jnp.roll(jnp.arange(- (N_half[i] - 1) // 2, (N_half[i] + 1) // 2 ), - (N_half[i] - 1) // 2) for i in range(3)]
 
-        kpts_int = np.array([ki.flatten() for ki in np.meshgrid(kx, ky, kz)]).T
+        kpts_int = jnp.array([ki.flatten() for ki in jnp.meshgrid(kx, ky, kz)]).T
 
-        kpts_int = kpts_int @ np.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]])
+        kpts_int = kpts_int @ jnp.array([[0, 1, 0], [1, 0, 0], [0, 0, 1]])
 
         return kpts_int 
 
@@ -650,15 +683,15 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
                 4 * K, K=K1*K2*K3, contains kx, ky, kz, k^2 for each kpoint
         '''
         # in this array, a*, b*, c* (without 2*pi) are arranged in column
-        box_inv = np.linalg.inv(box)
+        box_inv = jnp.linalg.inv(box)
 
         # K * 3, coordinate in reciprocal space
-        kpts = 2 * np.pi * kpts_int.dot(box_inv)
+        kpts = 2 * jnp.pi * kpts_int.dot(box_inv)
 
-        ksr = np.sum(kpts**2, axis=1)
+        ksr = jnp.sum(kpts**2, axis=1)
 
         # 4 * K
-        kpts = np.hstack((kpts, ksr[:, np.newaxis])).T
+        kpts = jnp.hstack((kpts, ksr[:, jnp.newaxis])).T
 
         return kpts
 
@@ -670,31 +703,31 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
         N = N.reshape(1,1,3)
         kpts_int = setup_kpts_integer(N)
         kpts = setup_kpts(box, kpts_int)
-        kpts[3, 0] = np.nan
 
-        m = np.linspace(-3,3,7).reshape(7, 1, 1)
+        m = jnp.linspace(-2,2,5).reshape(5, 1, 1)
         # theta_k : array of shape n_k
-        theta_k = np.prod(
-            np.sum(
-                bspline6(m + 6/2) * np.cos(2*np.pi*m*kpts_int[np.newaxis] / N),
+        theta_k = jnp.prod(
+            jnp.sum(
+                bspline6(m + 6/2) * jnp.cos(2*jnp.pi*m*kpts_int[jnp.newaxis] / N),
                 axis = 0
             ),
             axis = 1
         )
 
-        S_k = np.fft.fftn(Q_mesh)
+        S_k = jnp.fft.fftn(Q_mesh)
 
         S_k = S_k.flatten()
 
-        E_k = 2*np.pi/kpts[3]/np.linalg.det(box) * np.exp( - kpts[3] /4 /kappa**2) * np.abs(S_k/theta_k)**2
-        E_k[0] = 0
-        return np.sum(E_k)
+        E_k = 2*jnp.pi/kpts[3,1:]/jnp.linalg.det(box) * jnp.exp( - kpts[3, 1:] /4 /kappa**2) * jnp.abs(S_k[1:]/theta_k[1:])**2
+        return jnp.sum(E_k)
     
     Nj_Aji_star = get_recip_vectors(N, box)
-    m_u0, u0 = u_reference(positions, Nj_Aji_star)
-    sph_harms = sph_harmonics_GO(u0, Nj_Aji_star, lmax)
+    m_u0, u0    = u_reference(positions, Nj_Aji_star)
+    sph_harms   = sph_harmonics_GO(u0, Nj_Aji_star, lmax)
     Q_mesh_pera = Q_m_peratom(Q, sph_harms)
-    Q_mesh = Q_mesh_on_m(Q_mesh_pera, m_u0, N)
+    Q_mesh      = Q_mesh_on_m(Q_mesh_pera, m_u0, N)
     
     # Outputs energy in OPENMM units    
     return E_recip_on_grid(Q_mesh, box, N, kappa)*dielectric
+
+pme_reciprocal_force = jax.grad(pme_reciprocal)
