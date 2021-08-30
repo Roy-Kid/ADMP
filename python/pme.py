@@ -644,10 +644,10 @@ def pme_reciprocal(positions, box, Q, kappa, lmax, K1, K2, K3):
         def acc_mesh(ai, Q_mesh):
             return Q_mesh.at[indices_arr[ai, :, 0], indices_arr[ai, :, 1], indices_arr[ai, :, 2]].add(Q_mesh_pera[ai, :])
 
-        # Q_mesh = fori_loop(0, indices_arr.shape[0], acc_mesh, Q_mesh)
+        Q_mesh = fori_loop(0, indices_arr.shape[0], acc_mesh, Q_mesh)
 
-        for ai in trange(indices_arr.shape[0]):
-            Q_mesh = acc_mesh(ai, Q_mesh)
+        # for ai in trange(indices_arr.shape[0]):
+        #     Q_mesh = acc_mesh(ai, Q_mesh)
         
         return Q_mesh
 
