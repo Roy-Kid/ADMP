@@ -308,12 +308,9 @@ class ADMPForce(ADMPBaseForce):
         return pme_self(self.Q, self.lmax, self.kappa)
     
     def calc_reci_space_energy(self):
-        N = np.array([self.K1, self.K2, self.K3])
         Q = self.Q[:, :(self.lmax+1)**2].reshape(self.Q.shape[0], (self.lmax+1)**2)
-        return pme_reciprocal(self.positions, self.box, Q, self.lmax, self.kappa, N)
+        return pme_reciprocal(self.positions, self.box, Q, self.kappa, self.lmax, self.K1, self.K2, self.K3)
     
     def calc_reci_space_force(self):
-        N = np.array([self.K1, self.K2, self.K3])
         Q = self.Q[:, :(self.lmax+1)**2].reshape(self.Q.shape[0], (self.lmax+1)**2)
-        check_grads(pme_reciprocal, (self.positions, self.box, Q, self.lmax, self.kappa, N), order = 1)
-        return pme_reciprocal_force(self.positions, self.box, Q, self.lmax, self.kappa, N)
+        return pme_reciprocal_force(self.positions, self.box, Q, self.kappa, self.lmax, self.K1, self.K2, self.K3)

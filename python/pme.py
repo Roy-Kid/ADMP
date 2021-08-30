@@ -1,7 +1,13 @@
-from math import erf
+from datetime import time, timedelta
+import re
 import jax
+from jax._src.lax.control_flow import fori_loop
 import numpy as np
 import jax.numpy as jnp
+
+from tqdm import trange
+
+from math import erf
 
 from jax.config import config
 config.update("jax_enable_x64", True)
@@ -345,7 +351,9 @@ def pme_self(Q, lmax, kappa):
     factor = kappa/np.sqrt(np.pi) * (2*kappa*kappa)**l_list / l_fac2
     return - np.sum(factor * Q**2) * dielectric
 
-def pme_reciprocal(positions, box, Q, lmax, kappa, N):
+@jax.partial(jax.jit, static_argnums = (4, 5, 6, 7))
+def pme_reciprocal(positions, box, Q, kappa, lmax, K1, K2, K3):
+    N = np.array([K1,K2,K3])
     
     padder = jnp.arange(-3, 3)
     shifts = jnp.array(jnp.meshgrid(padder, padder, padder)).T.reshape((1, 216, 3))
@@ -545,41 +553,47 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
                 a Na * (6**3) * (l+1)^2 matrix, STGO operated on theta,
                 evaluated at 6*6*6 integer points about reference points m_u0 
         '''
-        if lmax > 2:
-            raise NotImplementedError('l > 2 (beyond quadrupole) not supported')
+        
         n_harm = (lmax + 1)**2
 
         N_a = u0.shape[0]
         u = (u0[:, jnp.newaxis, :] + shifts).reshape((N_a*216, 3)) 
 
         theta = theta_eval(u)
-        harmonics = theta
+                
+        if lmax == 0:
+            return theta.reshape(N_a, 216, n_harm)
         
-        if lmax >= 1:
-            # dipole
-            thetaprime = thetaprime_eval(u, Nj_Aji_star, theta)
-            harmonics = jnp.stack(
-                [harmonics,
-                thetaprime[:, 2],
-                thetaprime[:, 0],
-                thetaprime[:, 1]],
-                axis = -1
-            )
-        if lmax >= 2:
-            # quadrapole
-            theta2prime = theta2prime_eval(u, Nj_Aji_star)
-            rt3 = jnp.sqrt(3)
-            harmonics = jnp.hstack(
-                [harmonics,
-                jnp.stack([(3*theta2prime[:,2,2] - jnp.trace(theta2prime, axis1=1, axis2=2)) / 2,
-                rt3 * theta2prime[:, 0, 2],
-                rt3 * theta2prime[:, 1, 2],
-                rt3/2 * (theta2prime[:, 0, 0] - theta2prime[:, 1, 1]),
-                rt3 * theta2prime[:, 0, 1]], axis = 1)]
-            )
+        # dipole
+        thetaprime = thetaprime_eval(u, Nj_Aji_star, theta)
+        harmonics_1 = jnp.stack(
+            [theta,
+            thetaprime[:, 2],
+            thetaprime[:, 0],
+            thetaprime[:, 1]],
+            axis = -1
+        )
+        
+        if lmax == 1:
+            return harmonics_1.reshape(N_a, 216, n_harm)
 
-        return harmonics.reshape(N_a, 216, n_harm)
-
+        # quadrapole
+        theta2prime = theta2prime_eval(u, Nj_Aji_star)
+        rt3 = jnp.sqrt(3)
+        harmonics_2 = jnp.hstack(
+            [harmonics_1,
+            jnp.stack([(3*theta2prime[:,2,2] - jnp.trace(theta2prime, axis1=1, axis2=2)) / 2,
+            rt3 * theta2prime[:, 0, 2],
+            rt3 * theta2prime[:, 1, 2],
+            rt3/2 * (theta2prime[:, 0, 0] - theta2prime[:, 1, 1]),
+            rt3 * theta2prime[:, 0, 1]], axis = 1)]
+        )
+        
+        if lmax == 2:
+            return harmonics_2.reshape(N_a, 216, n_harm)
+        else:
+            raise NotImplementedError('l > 2 (beyond quadrupole) not supported')
+        
     def Q_m_peratom(Q, sph_harms):
         """
         Computes <R_t|Q>. See eq. (49) of https://doi.org/10.1021/ct5007983
@@ -622,35 +636,20 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
             Q_mesh: 
                 Nx * Ny * Nz matrix
         """
+
         indices_arr = jnp.mod(m_u0[:,np.newaxis,:]+shifts, N[np.newaxis, np.newaxis, :])
         
-        # def acc(ai, i):
-        #     indices = indices_arr[ai, i]
-        #     Q_mesh[indices[0], indices[1], indices[2]] += Q_mesh_pera[ai, i]
-        
         Q_mesh = jnp.zeros((N[0], N[1], N[2]))
-        for ai in range(indices_arr.shape[0]):
-            for i in range(indices_arr.shape[1]):
-                indices = indices_arr[ai, i]
-                Q_mesh = Q_mesh.at[indices[0], indices[1], indices[2]].add(Q_mesh_pera[ai, i])
-        return Q_mesh
-    
-    # @Q_mesh_on_m.defjvp
-    # def Q_mesh_on_m_jvp(primals, tangents):
-    #     Q_mesh_pera, m_u0, N = primals
-    #     Q_mesh_pera_dot, m_u0_dot, N_dot = tangents
         
-    #     primal_out = Q_mesh_on_m(Q_mesh_pera, m_u0, N)
-    #     tangent_out = jnp.zeros((N[0], N[1], N[2]))
-    #     for ai in range(m_u0.shape[0]):
-    #         for i in range(shifts[0].shape[0]):
-    #             shift = shifts[0, i]
-    #             shift = shift.reshape(3)
-    #             indices = jnp.mod(m_u0[ai] + shift, N)
-    #             print(Q_mesh_pera_dot[ai,i])
-    #             tangent_out = tangent_out.at[indices[0], indices[1], indices[2]].add(Q_mesh_pera_dot[ai, i])
+        def acc_mesh(ai, Q_mesh):
+            return Q_mesh.at[indices_arr[ai, :, 0], indices_arr[ai, :, 1], indices_arr[ai, :, 2]].add(Q_mesh_pera[ai, :])
 
-    #     return primal_out, tangent_out
+        # Q_mesh = fori_loop(0, indices_arr.shape[0], acc_mesh, Q_mesh)
+
+        for ai in trange(indices_arr.shape[0]):
+            Q_mesh = acc_mesh(ai, Q_mesh)
+        
+        return Q_mesh
 
     def setup_kpts_integer(N):
         """
@@ -720,14 +719,15 @@ def pme_reciprocal(positions, box, Q, lmax, kappa, N):
 
         E_k = 2*jnp.pi/kpts[3,1:]/jnp.linalg.det(box) * jnp.exp( - kpts[3, 1:] /4 /kappa**2) * jnp.abs(S_k[1:]/theta_k[1:])**2
         return jnp.sum(E_k)
-    
+
     Nj_Aji_star = get_recip_vectors(N, box)
     m_u0, u0    = u_reference(positions, Nj_Aji_star)
     sph_harms   = sph_harmonics_GO(u0, Nj_Aji_star, lmax)
     Q_mesh_pera = Q_m_peratom(Q, sph_harms)
     Q_mesh      = Q_mesh_on_m(Q_mesh_pera, m_u0, N)
+    E_recip     = E_recip_on_grid(Q_mesh, box, N, kappa)
     
     # Outputs energy in OPENMM units    
-    return E_recip_on_grid(Q_mesh, box, N, kappa)*dielectric
+    return E_recip*dielectric
 
-pme_reciprocal_force = jax.grad(pme_reciprocal)
+pme_reciprocal_force = jax.jit(jax.grad(pme_reciprocal), static_argnums=(4,5,6,7))

@@ -1,5 +1,6 @@
 from email import generator
 import numpy as np
+from simtk.openmm.openmm import Platform_getPluginLoadFailures
 from python.ADMPForce import ADMPGenerator
 import scipy
 from scipy.stats import special_ortho_group
@@ -34,10 +35,12 @@ force.update()
 force.kappa = 0.328532611
 
 # test reci_space_energy
-# reci_e = force.calc_reci_space_energy()
-# print('reciprocal', reci_e)
+print('============reciprocal energy===========')
+reci_e = force.calc_reci_space_energy()
+print(reci_e)
+print('============reciprocal force============')
 reci_f = force.calc_reci_space_force()
-print('reciprocal', reci_f)
+print(reci_f)
 
 
 
