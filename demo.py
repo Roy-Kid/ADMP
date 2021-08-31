@@ -1,13 +1,15 @@
 from email import generator
+from python.utils import convert_cart2harm
 import numpy as np
 from simtk.openmm.openmm import Platform_getPluginLoadFailures
-from python.ADMPForce import ADMPGenerator
+from python.ADMPForce import ADMPGenerator, get_mtpls_global
 import scipy
 from scipy.stats import special_ortho_group
 from simtk.openmm import *
 from simtk.openmm.app import *
 from simtk.unit import *
 import mpidplugin
+import python.pme as pme
 
 mScales = np.array([0.0, 0.0, 0.0, 1.0])
 pScales = np.array([0.0, 0.0, 0.0, 1.0])
@@ -33,6 +35,11 @@ positions[3:] += np.array([3.0, 0.0, 0.0])
 force = generator.create_force()
 force.update()
 force.kappa = 0.328532611
+
+multipoles_lc = np.concatenate((np.expand_dims(force.mpid_params['charges'], axis=1), force.mpid_params['dipoles'], force.mpid_params['quadrupoles']), axis=1)
+Q_lh = convert_cart2harm(multipoles_lc, lmax=2)
+axis_types = force.mpid_params['axis_types']
+axis_indices = force.mpid_params['axis_indices']
 
 # test reci_space_energy
 print('============reciprocal energy===========')

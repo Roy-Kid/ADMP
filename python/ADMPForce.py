@@ -84,6 +84,7 @@ def get_mtpls_global(positions, box, params, lmax=2):
     z_atoms = params['axis_indices'][:, 0]
     x_atoms = params['axis_indices'][:, 1]
     y_atoms = params['axis_indices'][:, 2]
+
     vec_z = positions[z_atoms] - positions
     vec_z = pbc_shift(vec_z, box, box_inv)
     vec_z = normalize(vec_z, axis=1)
