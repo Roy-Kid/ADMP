@@ -852,6 +852,7 @@ def gen_pme_reciprocal(axis_type, axis_indices):
                     Nx * Ny * Nz matrix
             """
 
+
             indices_arr = jnp.mod(m_u0[:,np.newaxis,:]+shifts, N[np.newaxis, np.newaxis, :])
             
             ### jax trick implementation without using for loop
@@ -861,8 +862,10 @@ def gen_pme_reciprocal(axis_type, axis_indices):
             ### Reference implementation
             Q_mesh = jnp.zeros((N[0], N[1], N[2]))
             
+
             def acc_mesh(ai, Q_mesh):
                 return Q_mesh.at[indices_arr[ai, :, 0], indices_arr[ai, :, 1], indices_arr[ai, :, 2]].add(Q_mesh_pera[ai, :])
+
 
             Q_mesh = fori_loop(0, indices_arr.shape[0], acc_mesh, Q_mesh)
             return Q_mesh
