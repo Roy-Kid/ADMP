@@ -10,8 +10,10 @@ from simtk.openmm import *
 from simtk.unit import *
 from .neighborList import construct_nblist
 from .utils import *
-from .pme import pme_real, pme_reciprocal, pme_self
+from .pme import pme_real, pme_self, gen_pme_reciprocal
 import mpidplugin
+
+from jax import value_and_grad, jit
 
 # see the python/mpidplugin.i code 
 ZThenX = 0
@@ -83,6 +85,7 @@ def get_mtpls_global(positions, box, params, lmax=2):
     z_atoms = params['axis_indices'][:, 0]
     x_atoms = params['axis_indices'][:, 1]
     y_atoms = params['axis_indices'][:, 2]
+
     vec_z = positions[z_atoms] - positions
     vec_z = pbc_shift(vec_z, box, box_inv)
     vec_z = normalize(vec_z, axis=1)
@@ -172,7 +175,7 @@ def read_mpid_inputs(pdb, xml):
     system = forcefield.createSystem(pdb.topology, nonbondedMethod=LJPME, defaultTholeWidth=5)
 
     generators = {}
-    print([i.__repr__() for i in forcefield.getGenerators()])
+    # print([i.__repr__() for i in forcefield.getGenerators()])
     for force_gen in forcefield.getGenerators():
         generator_name = re.search('.([A-Za-z]+) +object', force_gen.__repr__()).group(1)
         generators[generator_name] = force_gen
@@ -306,7 +309,20 @@ class ADMPForce(ADMPBaseForce):
     def calc_self_energy(self):
         return pme_self(self.Q, self.lmax, self.kappa)
     
-    def calc_reci_space_energy(self):
-        N = np.array([self.K1, self.K2, self.K3])
-        Q = self.Q[:, :(self.lmax+1)**2].reshape(self.Q.shape[0], (self.lmax+1)**2)
-        return pme_reciprocal(self.positions, self.box, Q, self.lmax, self.kappa, N)
+    def compile_reci_space_energy_and_force(self):
+        # Load the static parameters from self
+        axis_types = self.mpid_params['axis_types']
+        axis_indices = self.mpid_params['axis_indices']
+        
+        # Do the calculations
+        pme_reciprocal_energy = gen_pme_reciprocal(axis_types, axis_indices)
+        self.__reci_space_energy_and_force = jit(value_and_grad(pme_reciprocal_energy), static_argnums=(4,5,6,7))
+    
+    def calc_reci_space_energy_and_force(self):
+        Q_lc = np.concatenate((np.expand_dims(self.mpid_params['charges'], axis=1), self.mpid_params['dipoles'], self.mpid_params['quadrupoles']), axis=1)
+        Q_lh = convert_cart2harm(Q_lc, lmax=2)
+        
+        # Do the calculations
+        
+        ene, f = self.__reci_space_energy_and_force(self.positions, self.box, Q_lh, self.kappa, self.lmax, self.K1, self.K2, self.K3)
+        return ene, f
