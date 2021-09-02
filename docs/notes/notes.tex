@@ -1,0 +1,134 @@
+\documentclass[12pt]{extarticle}
+
+\usepackage{physics, amsmath, amsfonts, hyperref, cleveref}
+
+\usepackage[top = 2cm, bottom = 2cm, left = 2cm, right = 2cm]{geometry}
+
+% \usepackage{LentSheets}
+
+\allowdisplaybreaks
+
+\makeatletter
+% \renewcommand{\maketitle}{\bgroup\setlength{\parindent}{0pt}
+%     \begin{flushleft}
+%         \textbf{\Large\@title}\\
+%         \@author
+%     \end{flushleft}\egroup
+% }
+% \makeatother
+
+\renewcommand{\bf}{\mathbf}
+
+\title{Multipolar particle mesh Ewald programming notes}
+\author{Jichen, Feiyang}
+
+\begin{document}
+    \maketitle
+    \section{Background}
+    \href{https://pubs.acs.org/doi/pdf/10.1021/ct5007983}{JCTC paper}
+
+    Ewald and Particle Mesh Ewald(PME) are well-established methods for calculating long-ranged electrostatic forces.
+    
+    Starting with the exact electrostatic energy of a charge distribution \(\rho(\bf r)\), periodic under translations \(\bf n\)
+    \[
+        E = \frac{1}{2} \iint \rho(\bf r) \sum_{\bf n} \frac{\rho \pqty{ \bf r' + \bf n}}{\abs{\bf r - \bf r'}} \dd[3]{\bf r'} \dd[3]{\bf r}
+    \]
+    Ewald decomposes the charge density into smooth and discontinuous components
+    \begin{gather*}
+        \sum_{\bf n} \rho \pqty{ \bf r' + \bf n} = \underbrace{\sum_{\bf n} \tilde{\rho} \pqty{ \bf r' + \bf n}}_\text{reciprocal space part} + \underbrace{\bqty{\sum_{\bf n} \rho \pqty{ \bf r' + \bf n} - \sum_{\bf n} \tilde{\rho} \pqty{ \bf r' + \bf n}}}_ \text{real space part}\\
+        E = \frac{1}{2} \iint \rho(\bf r) \sum_{\bf n} \frac{\tilde{\rho} \pqty{ \bf r' + \bf n}}{\abs{\bf r - \bf r'}} \dd[3]{\bf r'} \dd[3]{\bf r} + \frac{1}{2} \iint \rho(\bf r) \sum_{\bf n} \frac{ \rho \pqty{ \bf r' + \bf n} - \sum_{\bf n} \tilde{\rho} \pqty{ \bf r' + \bf n}}{\abs{\bf r - \bf r'}} \dd[3]{\bf r'} \dd[3]{\bf r}
+    \end{gather*}
+    \subsection{Spherical multipoles}
+    
+    \subsection{Reciprocal space Ewald}
+    We approximate the Dirac delta and its STGOs with a Gaussian \(\chi\) of width \(\frac{1}{\kappa}\):
+    \begin{align*}
+        \delta ( \bf r - \bf R_a) &\equiv \lim_{\kappa \to  \infty} \chi (\bf r - \bf R_a)\\
+        \delta_{l \mu } (\bf r - \bf R_a) &= \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \delta (\bf r - \bf R_a)
+    \end{align*}
+    The charge density can be expressed as 
+    \begin{align*}
+        \rho (\bf r) &= \sum_{a} \sum_l^\infty q_{a, l \mu} \delta_{l \mu} \pqty{\bf r - \bf R_a}\\
+        \rho (\bf r) &= \tilde{\rho} ( \bf r) + \Delta \rho(\bf r)\\
+        \tilde{\rho} ( \bf r) &=  \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \chi_{l \mu} \pqty{\bf r - \bf R_a}
+    \end{align*}
+    where the correction part \(\Delta \rho (\bf r)\) is left to be treated in real space. 
+    
+    Periodicty is naturally incorporated into the charge density by spanning the distribution in reciprocal space \(\qty{ \bf k\; \forall\; \bf k \dotproduct \bf n = 2 \pi m, m \in \mathbb{Z}}\) 
+    \begin{align*}
+        \tilde{\rho} ( \bf r) &=  \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \bra{\bf r - \bf R_a} \ket{\chi } \\
+        \sum_{\bf n} \tilde{\rho} ( \bf r + \bf n) &=  \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \bra{\bf r - \bf R_a} \frac{1}{V}\sum_{\bf k} \ket{\bf k} \bra{\bf k}  \ket{\chi } \\
+        \sum_{\bf n} \tilde{\rho} ( \bf r + \bf n) &= \frac{1}{V}\sum_{\bf k}  \bra{\bf k}  \ket{\chi }  \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \underbrace{\bra{\bf r - \bf R_a} \ket{\bf k}}_{\bra{\bf r} \ket{\bf k} \pqty{\bra{\bf R_a} \ket{\bf k} }^*  } \\
+        \sum_{\bf n} \tilde{\rho} ( \bf r + \bf n) &= \frac{1}{V}\sum_{\bf k} \bra{\bf r} \ket{\bf k}  \bra{\bf k}  \ket{\chi }  \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \bra{\bf k} \ket{\bf R_a}\\
+        \sum_{\bf n} \tilde{\rho} ( \bf r + \bf n) &= \frac{1}{V}\sum_{\bf k} \bra{\bf r} \ket{\bf k}  \bra{\bf k}  \ket{\chi }  S_{\bf k} = \frac{1}{V}\sum_{\bf k} \bra{\bf k} \ket{\bf r}\bra{\chi }\ket{\bf k}  S_{\bf k}^*
+    \end{align*}
+    where in the last line we used realness of \(\rho\) and denoted \begin{equation}
+        S_{\bf k} \equiv \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \bra{\bf k} \ket{\bf R_a}. \label{eq:esf}
+    \end{equation}
+    as the structure factor. It is worth noticing \[
+        \sum_{\bf n} \rho( \bf r + \bf n) = \frac{1}{V}\sum_{\bf k} \bra{\bf k} \ket{\bf r}\pqty{ \lim_{\kappa \to \infty} \bra{\chi }\ket{\bf k}}  S_{\bf k}^* = \frac{1}{V}\sum_{\bf k} \bra{\bf k} \ket{\bf r} S_{\bf k}^*
+    \]
+    because the Fourier transform of the Dirac delta is simply unity.
+
+    Substituting \(\sum_{\bf n} \tilde{\rho} ( \bf r' + \bf n)\) into reciprocal space part energy, we obtain \begin{align*}
+        \frac{1}{2} \iint \rho(\bf r) \sum_{\bf n} \frac{\tilde{\rho} \pqty{ \bf r' + \bf n}}{\abs{\bf r - \bf r'}} \dd[3]{\bf r'} \dd[3]{\bf r} 
+        &= \frac{1}{2} \int \frac{1}{V}\sum_{\bf k} \bra{\bf k} \ket{\bf r} S_{\bf k}^* \frac{1}{V}\sum_{\bf k'}   \bra{\bf k'}  \ket{\chi }  S_{\bf k'} \underbrace{\int \frac{\bra{\bf r'} \ket{\bf k'}}{\abs{\bf r - \bf r'}} \dd[3]{\bf r'} }_{\bra{\bf r} \ket{\bf k'} \frac{4 \pi}{k^2}} \dd[3]{\bf r} \\
+        &= \sum_{\bf k, \bf k'} \frac{2\pi}{Vk'^2}   \bra{\bf k} \underbrace{\frac{1}{V} \int  \dd[3]{\bf r}\ket{\bf r} \bra{\bf r}}_1 \ket{\bf k'} S_{\bf k}^*   \bra{\bf k'}  \ket{\chi }  S_{\bf k'}\\
+        &= \sum_{\bf k, \bf k'} \frac{2\pi}{Vk'^2}   \delta_{\bf k' \bf k} S_{\bf k}^*   \bra{\bf k'}  \ket{\chi }  S_{\bf k'}\\
+        &= \boxed{\sum_{ \bf k} \frac{2\pi}{Vk^2}  \bra{\bf k}  \ket{\chi } \abs{ S_{\bf k}}^2}
+    \end{align*}
+    which is the Ewald expression of reciprocal space electrostatic energy. Given a desired relative error bound, only finite numbers \(K_1, K_2, K_3\) of \(\bf k\) need to be taken into account.
+    \subsection{Particle Mesh Ewald}
+    The Ewald structure factor calculated in \cref{eq:esf} is computationally complex in that it scales as \(O(N_a^2)\), where \(N_a\) is the number of atoms in a unit cell of the system. The Particle Mesh Ewald avoids this complexity by ``meshing'' the multipoles onto grid points.
+
+    \section{Formally deriving derivatives of the mesh function}
+    The weight function \(\theta\) is differentiated up to \(l_\text{max}\) times. We need compact expressions for the evaluation of its derivatives. 
+    \[
+        \theta = \prod_{d = 1}^3 M_n \pqty{ N_d ( \mathbf r - \mathbf R_a) \dotproduct \bf a^*_d + \frac{n}{2} }
+    \]
+    Denoting \(u_d = N_d ( \mathbf r - \mathbf R_a) \dotproduct \bf a^*_d + \frac{n}{2} \) and \(\partial_i \equiv \pdv[]{}{u_i}\), we have for first derivative
+    \begin{align*}
+        \partial_i \theta &= \dv[]{\theta}{(\ln \theta)} \pdv[]{(\ln \theta)}{u_i}\\
+        &= \theta \partial_i \pqty{\sum_d \ln M_n(u_d) }\\
+        &= \theta \sum_d \partial_i \ln M_n(u_d) \\
+        &= \theta \frac{M'_n(u_i)}{M_n(u_i)} 
+    \end{align*}
+    where \(M'_n, M''_n\) are derivatives of \(M_n\) derived in \texttt{derive\_theta.py}. The above expression can be easily verified to be correct by writing it in the following form \[
+        \pdv{(M_n(u_1) M_n(u_2) M_n(u_3))}{u_i} = M_n(u_1) M_n(u_2) M_n(u_3) \frac{M'_n (u_i)}{M_n(u_i)}.
+    \]
+    In numpy code, the fraction is a elementwise division.
+    
+    Moving on to second derivative, \begin{align*}
+        \partial_j \partial_i \theta &= \partial_j \pqty{\theta \partial_i \ln \theta}\\
+        &= \frac{\pqty{\partial_i \theta} \pqty{\partial_j \theta}}{\theta} + \theta \partial_j \partial_i \ln M_n (u_i)\\
+        &= \frac{\pqty{\partial_i \theta} \pqty{\partial_j \theta}}{\theta} + \theta \delta_{ij} \bqty{\frac{M''_n (u_i)}{M_n(u_i)} - \pqty{\frac{M'_n(u_i)}{M_n(u_i)} }^2}\\
+        &= \theta \delta_{ij} \bqty{\frac{M''_n (u_i)}{M_n(u_i)} } + \frac{\pqty{\partial_i \theta} \pqty{\partial_j \theta} - \delta_{ij} \pqty{\partial_i \theta}^2 }{\theta} 
+    \end{align*}
+    where the first term is diagonal and the second term is off-diagonal, as we would have inspected if we wrote \[
+        \pdv{\theta}{u_i}{u_j} = \begin{pmatrix} 
+            M''_1 M_2 M_3 & M'_1 M'_2 M_3 & M'_1 M_2 M'_3\\
+            M'_1 M'_2 M_3 & M_1 M''_2 M_3 & M_1 M'_2 M'_3\\
+            M'_1 M_2 M'_3 & M_1 M'_2 M'_3 & M_1 M_2 M''_3
+        \end{pmatrix}_{ij}
+    \]
+
+    Third derivative:
+    \begin{align*}
+        \partial_k \partial_j \partial_i \theta 
+        &= \partial_k \partial_j (\theta \partial_i \ln \theta)\\
+        &= \frac{(\partial_k \partial_j \theta) \partial_i \theta}{\theta} +  
+    \end{align*}
+    
+    Derivations demonstrated above should allow us to express higher order derivatives of \(\theta\) in terms of direct products of \(M_d\) with more confidence and ease.
+
+    To get derivatives with respect to \(\bf r\), chain rule can be employed \[
+        \pdv[]{}{r_i} = \sum_j \pdv[]{u_j}{r_i} \pdv[]{}{u_j} = \sum_j - N_j A^*_{ji} \pdv{u_j}
+    \]
+    where \(A^*_{ji} \hat{\bf e}_i = \bf a^*_j\). Since \( - N_j A^*_{ji}\) are constant Jacobians, the transform is easy in arbitrary order of derivative.
+
+\section{Implementation details}
+
+
+
+
+\end{document}

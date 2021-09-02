@@ -1,11 +1,7 @@
 from datetime import time, timedelta
-import re
-import jax
 from jax.lax import fori_loop
 import numpy as np
 import jax.numpy as jnp
-
-from tqdm import trange
 
 from math import erf
 
@@ -16,7 +12,18 @@ from .utils import rot_global2local, rot_local2global
 
 dielectric = 1389.35455846 # in e^2/A
 
-def generate_construct_local_frame(axis_types, axis_indices):
+def generate_construct_localframes(axis_types, axis_indices):
+    """
+    Generates the local frame constructor, common to the same physical system
+    inputs:
+        axis_types:
+            types of local frame transformation rules for each atom.
+        axis_indices:
+            z,x,y atoms of each local frame.
+    outputs:
+        construct_localframes:
+            function type (positions, box) -> local_frames
+    """
     ZThenX            = 0
     Bisector          = 1
     ZBisect           = 2
@@ -36,24 +43,24 @@ def generate_construct_local_frame(axis_types, axis_indices):
     ThreeFold_filter = (axis_types == ThreeFold)
     
     def pbc_shift(drvecs, box, box_inv):
-            '''
-            Dealing with the pbc shifts of vectors
+        '''
+        Dealing with the pbc shifts of vectors
 
-            Inputs:
-                rvecs:
-                    N * 3, a list of real space vectors in Cartesian
-                box:
-                    3 * 3, box matrix, with axes arranged in rows
-                box_inv:
-                    3 * 3, inverse of box matrix
+        Inputs:
+            rvecs:
+                N * 3, a list of real space vectors in Cartesian
+            box:
+                3 * 3, box matrix, with axes arranged in rows
+            box_inv:
+                3 * 3, inverse of box matrix
 
-            Outputs:
-                rvecs:
-                    N * 3, vectors that have been shifted, in Cartesian
-            '''
-            unshifted_dsvecs = drvecs.dot(box_inv)
-            dsvecs = unshifted_dsvecs - jnp.floor(unshifted_dsvecs + 0.5)
-            return dsvecs.dot(box)
+        Outputs:
+            rvecs:
+                N * 3, vectors that have been shifted, in Cartesian
+        '''
+        unshifted_dsvecs = drvecs.dot(box_inv)
+        dsvecs = unshifted_dsvecs - jnp.floor(unshifted_dsvecs + 0.5)
+        return dsvecs.dot(box)
         
     def normalize(matrix, axis=1, ord=2):
         '''
@@ -63,7 +70,6 @@ def generate_construct_local_frame(axis_types, axis_indices):
         return normalised
     
     def c_l_f(positions, box):
-        config.update("jax_enable_x64", True)
         '''
         This function constructs the local frames for each site
 
@@ -552,7 +558,7 @@ def pme_self(Q, lmax, kappa):
     return - np.sum(factor * Q**2) * dielectric
 
 def gen_pme_reciprocal(axis_type, axis_indices):
-    construct_local_frame = generate_construct_local_frame(axis_type, axis_indices)
+    construct_localframes = generate_construct_localframes(axis_type, axis_indices)
     def pme_reciprocal_on_Qgh(positions, box, Q, kappa, lmax, K1, K2, K3):
         '''
         This function calculates the PME reciprocal space energy
@@ -577,8 +583,8 @@ def gen_pme_reciprocal(axis_type, axis_indices):
         '''
         N = np.array([K1,K2,K3])
         ################
-        padder = jnp.arange(-3, 3)
-        shifts = jnp.array(jnp.meshgrid(padder, padder, padder)).T.reshape((1, 216, 3))
+        bspline_range = jnp.arange(-3, 3)
+        shifts = jnp.array(jnp.meshgrid(bspline_range, bspline_range, bspline_range)).T.reshape((1, 216, 3))
         
         def get_recip_vectors(N, box):
             """
@@ -945,7 +951,7 @@ def gen_pme_reciprocal(axis_type, axis_indices):
         return E_recip*dielectric
 
     def pme_reciprocal(positions, box,  Q_lh, kappa, lmax, K1, K2, K3):
-        localframes = construct_local_frame(positions, box)
+        localframes = construct_localframes(positions, box)
         Q_gh = rot_local2global(Q_lh, localframes, lmax)
         return pme_reciprocal_on_Qgh(positions, box, Q_gh, kappa, lmax, K1, K2, K3)
     return pme_reciprocal
