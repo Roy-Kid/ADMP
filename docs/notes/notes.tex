@@ -95,11 +95,15 @@
         \bf k = \sum_i^3 m_i \bf A^*_i,\; m_i \in \bqty{\text{floor} - \frac{K_i - 1}{2}, \text{floor} \frac{K_i - 1}{2}  }
     \]
     \subsection{Particle Mesh Ewald}
-    The Ewald structure factor calculated in \cref{eq:esf} is computationally complex in that it scales as \(O(N_a^2)\), where \(N_a\) is the number of atoms in a unit cell of the system. The Particle Mesh Ewald avoids this complexity by ``meshing'' the multipoles onto grid points. \begin{align*}
-        \ket{\bf R_a} &= \frac{1}{V}\int \dd[3]{\bf r} \ket{\bf r} \bra{\bf r} \ket{\bf R_a} = \frac{1}{V}\int \dd[3]{\bf r}\sum_i \ket{\bf r} \bra*{\bf r -\bf  R_a}\ket*{\delta}\\
-        \bra{\bf k}\ket{\bf R_a} &\approx \bra{\bf k}\ket{\tilde{\bf R}_a} \equiv \sum_m \bra{\bf k}\ket{\bf R_{\bf m}} \bra{\bf R_{\bf m} - \bf R_a} \ket{\theta} b(\bf R_{\bf m} - \bf R_a)
+    The Ewald structure factor calculated in \cref{eq:esf} is computationally complex in that it scales as \(O(N_a^2)\), where \(N_a\) is the number of atoms in a unit cell of the system. The Particle Mesh Ewald avoids this complexity by ``meshing'' the multipoles onto grid points. 
+    \begin{align*}
+        \sum_{\bf m} \theta(-\bf R_{\bf m}) \xi\pqty{\pqty{\bf r - \bf R_a} + \bf R_{\bf m}} = \delta(\bf r -\bf R_a)
     \end{align*}
-    Here, \(\theta\) is Cardinal B-spline weighting function which is normalised upon summation over grid points \(m\) around the real atomic position \(\bf R_a\). \(b(\bf R_{\bf m} - \bf R_a)\) is a scalar such that the approximation is valid.\begin{align}
+    Here, \(\theta\) is Cardinal B-spline weighting function which is normalised upon summation over grid points \(m\) around the real atomic position \(\bf R_a\). 
+    \begin{align*}
+        \ket{\bf R_a} &= \frac{1}{V}\int \dd[3]{\bf r} \ket{\bf r} \bra{\bf r} \ket{\bf R_a} = \frac{1}{V}\int \dd[3]{\bf r} \ket{\bf r} \delta \pqty{\bf r -\bf  R_a}
+    \end{align*}
+    \begin{align}
         S_{\bf k} & \approx \sum_m \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!}  \bra{\bf k}\ket{\bf R_{\bf m}} \bra{\bf R_{\bf m} - \bf R_a} \ket{\theta} b(\bf R_{\bf m} - \bf R_a) 
     \end{align}
     Defining \[
@@ -112,13 +116,13 @@
     \begin{align}
         S^\text{PME}_{\bf k} &= \sum_m \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \bra{\bf k} \ket{\bf R_{\bf m}} \bra{\bf R_{\bf m} - \bf R_a} \ket{\theta}\nonumber\\
         S^\text{PME}_{\bf k} &=  \sum_m  \bra{\bf k} \ket{\bf R_{\bf m}} \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \bra{\bf R_{\bf m} - \bf R_a} \ket{\theta}\nonumber\\
-        S^\text{PME}_{\bf k} &=  \mathbf{FFT} \pqty{ Q(\bf m)}
+        S^\text{PME}_{\bf k} &=  \mathcal{F} \pqty{ Q(\bf m)}
         \label{eq:sfpme}
     \end{align}
     where \[
         Q(\bf m) = \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \bra{\bf R_{\bf m} - \bf R_a} \ket{\theta}
     \]
-    The structure factor defined in \cref{eq:sfpme} differs from that in \cref{eq:esf} by a renormalisation factor \(\bra{\bf k} \ket{\theta} = \textbf{FFT} \pqty{\bra{\bf R_{\bf m}} \ket{\theta}}\).
+    The structure factor defined in \cref{eq:sfpme} differs from that in \cref{eq:esf} by a renormalisation factor \(\bra{\bf k} \ket{\theta} = \mathcal{F} \pqty{\bra{\bf R_{\bf m}} \ket{\theta}}\).
 
     \section{Formally deriving derivatives of the mesh function}
     The weight function \(\theta\) is differentiated up to \(l_\text{max}\) times. We need compact expressions for the evaluation of its derivatives. 
