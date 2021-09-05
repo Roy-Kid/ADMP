@@ -1,4 +1,5 @@
 import numpy as np
+import sys
 
 def pbc_shift(rvecs, box, box_inv):
     '''
@@ -202,3 +203,43 @@ def normalize(matrix, axis=1, ord=2):
     matrix /= np.linalg.norm(matrix, axis=axis, keepdims=True, ord=ord)
     return matrix
 
+def sph_harmonics(r, lmax):
+    '''
+    Find out the value of spherical harmonics, assume the order is:
+    00, 10, 11c, 11s, 20, 21c, 21s, 22c, 22s, ...
+    Currently supports lmax <= 2
+
+    Input:
+        r: 
+            a n * 3 matrix containing all positions
+        lmax: 
+            the maximum l value
+
+    Output: 
+        harmonics: 
+            a n * (l+1)^2 matrix, the harmonic values of each vector
+    '''
+    if lmax > 2:
+        sys.exit('l > 2 (beyond quadrupole) not supported')
+    n_harm = (lmax + 1)**2
+    n_sites = len(r)
+    harmonics = np.zeros((n_sites, n_harm))
+
+    harmonics[:, 0] = 1
+    if lmax >= 1:
+        # dipole
+        harmonics[:, 1] = r[:, 2]
+        harmonics[:, 2] = r[:, 0]
+        harmonics[:, 3] = r[:, 1]
+    if lmax >= 2:
+        # quadrapole
+        rt3 = np.sqrt(3)
+        rsq = r**2
+        rnorm2 = np.sum(rsq, axis=1)
+        harmonics[:, 4] = (3*rsq[:,2] - rnorm2) / 2
+        harmonics[:, 5] = rt3 * r[:,0] * r[:,2]
+        harmonics[:, 6] = rt3 * r[:,1] * r[:,2]
+        harmonics[:, 7] = rt3/2 * (rsq[:,0] - rsq[:,1])
+        harmonics[:, 8] = rt3 * r[:,0] * r[:,1]
+
+    return harmonics

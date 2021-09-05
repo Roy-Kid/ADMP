@@ -289,7 +289,7 @@ def calc_ePermCoef(mscales, kappa, dr):
 
     return cc, cd, dd_m0, dd_m1, cq, dq_m0, dq_m1, qq_m0, qq_m1, qq_m2
 
-def pme_real(positions, box, Q, lmax, mu_ind, polarizabilities, rc, kappa, covalent_map, mScales, pScales, dScales, nbs_obj):
+def pme_real(positions, box, Q, kappa, covalent_map, mScales, pScales, dScales, nbs_obj):
     '''
     This function computes the realspace part of PME interactions.
 
@@ -342,16 +342,12 @@ def pme_real(positions, box, Q, lmax, mu_ind, polarizabilities, rc, kappa, coval
     pScales = np.concatenate([pScales, np.array([1])])
     dScales = np.concatenate([dScales, np.array([1])])
 
-
-    covalent_map = covalent_map.multiply(covalent_map<=max_excl)
-
     # neighbor list
     n_nbs = nbs_obj.n_nbs
     max_n_nbs = np.max(n_nbs)
     nbs = nbs_obj.nbs[:, 0:max_n_nbs]
     dr_vecs = nbs_obj.dr_vecs[:, 0:max_n_nbs]
     drdr = nbs_obj.distances2[:, 0:max_n_nbs]
-    box_inv = np.linalg.inv(box)
     n_atoms = len(positions)
     
     t = np.sum(n_nbs)
@@ -388,8 +384,8 @@ def pme_real(positions, box, Q, lmax, mu_ind, polarizabilities, rc, kappa, coval
     for i, pair in enumerate(pairs):
         
         # get [m-p-d]scale
-        cmap = covalent_map[pair[0], :].toarray()
-        nbond = cmap[0, pair[1]]
+
+        nbond = covalent_map[pair[0]][pair[1]]
         mscale = mScales[nbond-1]
         mscales[i] = mscale
 
