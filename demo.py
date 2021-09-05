@@ -55,7 +55,8 @@ axis_type = np.array(
 axis_indices = np.vstack(
     [atom.axis_indices for atom in atomDicts.values()]
 )
-
+# covalent_map is simply as N*N matrix now
+# remove sparse matrix
 covalent_map = assemble_covalent(residueDicts, natoms)    
 
 
