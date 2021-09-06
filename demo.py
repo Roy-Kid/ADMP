@@ -1,3 +1,4 @@
+from python.neiV2 import NeighborList
 from python.utils import convert_cart2harm, rot_local2global
 import numpy as np
 
@@ -76,6 +77,8 @@ positions[3:6] = positions[3:6].dot(R2)
 positions[3:] += np.array([3.0, 0.0, 0.0])
 
 neighList = construct_nblist(positions, box, rc)
+
+neigh2 = NeighborList(positions, box, rc)
 
 local_frames = generate_construct_local_frame(axis_type, axis_indices)(positions, box)
 
