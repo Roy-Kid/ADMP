@@ -95,35 +95,42 @@
         \bf k = \sum_i^3 m_i \bf A^*_i,\; m_i \in \bqty{\text{floor} - \frac{K_i - 1}{2}, \text{floor} \frac{K_i - 1}{2}  }
     \]
     \subsection{Particle Mesh Ewald}
-    The Ewald structure factor calculated in \cref{eq:esf} is computationally complex in that it scales as \(O(N_a^2)\), where \(N_a\) is the number of atoms in a unit cell of the system. The Particle Mesh Ewald avoids this complexity by ``meshing'' the multipoles onto grid points. 
+    The Ewald structure factor calculated in \cref{eq:esf} is computationally complex in that it scales as \(O(N_a^2)\), where \(N_a\) is the number of atoms in a unit cell of the system. The Particle Mesh Ewald method avoids this complexity by ``meshing'' the multipoles onto grid points. To make progress, we make all the following derivations, \emph{assuming \(\bf m'\) is a set of meshgrid points with infinite resolution}, and then assess our conclusion in the sense of finite grid points \(FFT\).
     \begin{align*}
-        \sum_{\bf m} \theta(-\bf R_{\bf m}) \xi\pqty{\pqty{\bf r - \bf R_a} + \bf R_{\bf m}} = \delta(\bf r -\bf R_a)
+        \sum_{\bf m'} \theta(\bf R_{\bf m'}) \xi\pqty{\pqty{\bf r - \bf R_a} - \bf R_{\bf m'}} \approx \delta(\bf r -\bf R_a)
     \end{align*}
-    Here, \(\theta\) is Cardinal B-spline weighting function which is normalised upon summation over grid points \(m\) around the real atomic position \(\bf R_a\). 
+    Here, \(\theta\) is Cardinal B-spline weighting function which is normalised upon summation over grid points \(m\) around the real atomic position \(\bf R_a\), \(\xi\) is the ``reciprocal'' function of \(\xi\) such that Dirac delta can be written as a convolution of \(\xi\) and \(\theta\). If the grid is resolved well enough, we can make \(\bf R_{\bf m'} \to \bf R_{\bf m'} - \bf R_a\). Letting \(\bf r = \bf R_{\bf m}\), 
     \begin{align*}
-        \ket{\bf R_a} &= \frac{1}{V}\int \dd[3]{\bf r} \ket{\bf r} \bra{\bf r} \ket{\bf R_a} = \frac{1}{V}\int \dd[3]{\bf r} \ket{\bf r} \delta \pqty{\bf r -\bf  R_a}
+        \sum_{\bf m'} \theta(\bf R_{\bf m'} - \bf R_a) \xi\pqty{\bf R_{\bf m} - \bf R_{\bf m'}} = \delta(\bf R_{\bf m} - \bf R_a)
     \end{align*}
-    \begin{align}
-        S_{\bf k} & \approx \sum_m \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!}  \bra{\bf k}\ket{\bf R_{\bf m}} \bra{\bf R_{\bf m} - \bf R_a} \ket{\theta} b(\bf R_{\bf m} - \bf R_a) 
-    \end{align}
+    Equipped with this expansion of Dirac delta, we can go back to \cref{eq:esf}. 
+    \begin{align*}
+        S_{\bf k} &= \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \bra{\bf k} \sum_{\bf m} \ket{\bf R_{\bf m}} \bra{\bf R_{\bf m} - \bf R_a} \ket{ \delta}\\ 
+        S_{\bf k} &= \sum_{\bf m} \bra{\bf k}  \ket{\bf R_{\bf m}}  \sum_{\bf m'} \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!}  \theta(\bf R_{\bf m'} - \bf R_a) \xi\pqty{\bf R_{\bf m} - \bf R_{\bf m'}}
+    \end{align*}
     Defining \[
-        Q_a(\bf m) = \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \bra{\bf R_{\bf m} - \bf R_a} \ket{\theta}
+        Q(\bf R_{\bf m}) = \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \bra{\bf R_{\bf m} - \bf R_a} \ket{\theta}
     \]
     We have \begin{align*}
-        S_{\bf k} & \approx \sum_a \sum_m \bra{\bf k}\ket{\bf R_{\bf m}} Q(\bf m) b(\bf R_{\bf m} - \bf R_a) \\
-        S_{\bf k} & \approx \sum_a \sum_m \bra{\bf k}\ket{\bf R_{\bf m}} Q(\bf m) b(\bf R_{\bf m} - \bf R_a) \\
+        S_{\bf k} &= \sum_{\bf m} \bra{\bf k}  \ket{\bf R_{\bf m}}  \sum_{\bf m'}  Q(\bf R_{\bf m'})\xi\pqty{\bf R_{\bf m} - \bf R_{\bf m'}}\\
+        S_{\bf k} &= \sum_{\bf m} \bra{\bf k}  \ket{\bf R_{\bf m}} \qty{Q * \xi}\pqty{\bf R_{\bf m}}\\
+        S_{\bf k} &= \mathcal{F} \pqty{\qty{Q * \xi}\pqty{\bf R_{\bf m}}} =S^\text{PME}_{\bf k} \times \mathcal{F} \pqty{\xi\pqty{\bf R_{\bf m}}}
     \end{align*}
+    where we have used convolution theorem and denoted
     \begin{align}
-        S^\text{PME}_{\bf k} &= \sum_m \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \bra{\bf k} \ket{\bf R_{\bf m}} \bra{\bf R_{\bf m} - \bf R_a} \ket{\theta}\nonumber\\
-        S^\text{PME}_{\bf k} &=  \sum_m  \bra{\bf k} \ket{\bf R_{\bf m}} \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \bra{\bf R_{\bf m} - \bf R_a} \ket{\theta}\nonumber\\
-        S^\text{PME}_{\bf k} &=  \mathcal{F} \pqty{ Q(\bf m)}
-        \label{eq:sfpme}
+        S^\text{PME}_{\bf k} &=  \mathcal{F} \pqty{Q\pqty{\bf R_{\bf m}}}
+        \label{eq:sfpme}.
     \end{align}
-    where \[
-        Q(\bf m) = \sum_{a} \sum_{l = 0}^{l_{\max}} q_{a, l \mu} \frac{C_{l \mu} (\grad_a)}{(2l - 1)!!} \bra{\bf R_{\bf m} - \bf R_a} \ket{\theta}
+    Noticing \begin{gather*}
+        \mathcal{F} \pqty{\xi\pqty{\bf R_{\bf m}}} \mathcal{F} \pqty{\theta\pqty{\bf R_{\bf m}}} = \mathcal{F} \pqty{\sum_{\bf m'} \theta(\bf R_{\bf m'}) \xi\pqty{\bf R_{\bf m} - \bf R_{\bf m'}}} = \mathcal{F} \pqty{\delta\pqty{\bf R_{\bf m}}} = 1\\
+        \mathcal{F} \pqty{\xi\pqty{\bf R_{\bf m}}} = \frac{1}{ \mathcal{F} \pqty{\theta\pqty{\bf R_{\bf m}}} } = \frac{1}{\theta_{\bf k}}
+    \end{gather*}
+    We can conclude that the structure factor defined in \cref{eq:sfpme} differs from that in \cref{eq:esf} by a renormalisation factor \[
+        S_{\bf k} =\frac{S^\text{PME}_{\bf k} }{ \theta_{\bf k}}
     \]
-    The structure factor defined in \cref{eq:sfpme} differs from that in \cref{eq:esf} by a renormalisation factor \(\bra{\bf k} \ket{\theta} = \mathcal{F} \pqty{\bra{\bf R_{\bf m}} \ket{\theta}}\).
-
+    \begin{equation}
+        E^\text{PME}_\text{recip}= \sum_{ \bf k} \frac{2\pi}{Vk^2}  \bra{\bf k}  \ket{\chi } \abs{ \frac{S^\text{PME}_{\bf k} }{ \theta_{\bf k}}}^2 \label{eq:epme}
+    \end{equation}
     \section{Formally deriving derivatives of the mesh function}
     The weight function \(\theta\) is differentiated up to \(l_\text{max}\) times. We need compact expressions for the evaluation of its derivatives. 
     \[
