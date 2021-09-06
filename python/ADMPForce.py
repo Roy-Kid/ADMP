@@ -4,7 +4,6 @@
 import numpy as np
 import re
 from scipy.sparse import csr_matrix
-import simtk.openmm.app.element as elem
 from simtk.openmm.app import *
 from simtk.openmm import *
 from simtk.unit import *
@@ -235,94 +234,5 @@ def read_mpid_inputs(pdb, xml):
         list_elems.append(a.element)
 
     return positions, box, list_elems, params
-
+    
 # --- end pre-process section --- #
-
-class ADMPGenerator:
-
-    def __init__(self, pdb, xml, rc, ethresh, mScales, pScales, dScales, **kwargs) -> None:
-        self.positions, self.box, self.list_elem, self.mpid_params = read_mpid_inputs(pdb, xml)
-        
-        self.rc = rc
-        self.ethresh = ethresh
-        self.mScales = mScales
-        self.pScales = pScales
-        self.dScales = dScales
-        
-
-    def create_force(self):
-        
-        force = ADMPForce()
-        force.positions = self.positions
-        force.box = self.box
-        force.box_inv = np.linalg.inv(self.box)
-        force.rc = self.rc
-        force.mpid_params = self.mpid_params
-        force.ethresh = self.ethresh
-        force.mScales = self.mScales
-        force.pScales = self.pScales
-        force.dScales = self.dScales
-        force.box = self.box
-        force.lmax = 2
-        return force
-
-
-class ADMPBaseForce:
-    
-    def __init__(self) -> None:
-        pass
-    
-    def contruct_neighborlist(self):
-        self.neighlist = construct_nblist(self.positions, self.box, self.rc)
-
-    def setup_ewald_parameters(self):
-        self.kappa, self.K1, self.K2, self.K3 = setup_ewald_parameters(self.rc, self.ethresh, self.box)
-        
-    def get_mtpls_global(self):
-        self.Q, self.local_frames = get_mtpls_global(box = self.box, positions = self.positions, params=self.mpid_params, lmax=self.lmax)
-
-
-    def update(self, positions=None, box=None, ):
-        """
-            This method is used to update parameters, such as positions, box etc.
-            And calculate related parameters.
-        """
-        positions = positions or self.positions
-        box = box or self.box
-        rc = self.rc
-        
-        self.contruct_neighborlist()
-        
-        self.setup_ewald_parameters()
-        
-        self.get_mtpls_global()
-
-
-class ADMPForce(ADMPBaseForce):
-    
-    def __init__(self) -> None:
-        super().__init__()
-    
-    def calc_real_space_energy(self):
-        return pme_real(self.positions, self.box, self.Q, self.lmax, self.box_inv, self.mpid_params['polarizabilities'], self.rc, self.kappa, self.mpid_params['covalent_map'], self.mScales, self.pScales, self.dScales, self.neighlist)
-    
-    def calc_self_energy(self):
-        return pme_self(self.Q, self.lmax, self.kappa)
-    
-    def compile_reci_space_energy_and_force(self):
-        # Load the static parameters from self
-        axis_types = self.mpid_params['axis_types']
-        axis_indices = self.mpid_params['axis_indices']
-        
-        # Do the calculations
-        pme_reciprocal_energy = gen_pme_reciprocal(axis_types, axis_indices)
-        self.__reci_space_energy_and_force = jit(value_and_grad(pme_reciprocal_energy), static_argnums=(4,5,6,7))
-    
-    def calc_reci_space_energy_and_force(self):
-        Q_lc = np.concatenate((np.expand_dims(self.mpid_params['charges'], axis=1), self.mpid_params['dipoles'], self.mpid_params['quadrupoles']), axis=1)
-        Q_lh = convert_cart2harm(Q_lc, lmax=2)
-        
-        # Do the calculations
-        
-        ene, f = self.__reci_space_energy_and_force(self.positions, self.box, Q_lh, self.kappa, self.lmax, self.K1, self.K2, self.K3)
-        return ene, f
