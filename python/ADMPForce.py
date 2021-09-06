@@ -141,9 +141,9 @@ def get_mtpls_global(positions, box, params, lmax=2):
 
     multipoles_lc = np.concatenate((np.expand_dims(params['charges'], axis=1), params['dipoles'], params['quadrupoles']), axis=1)
     multipoles_lh = convert_cart2harm(multipoles_lc, lmax=2)
-    Q = rot_local2global(multipoles_lh, local_frames, lmax=2)
-
-    return Q, local_frames
+    Qglobal = rot_local2global(multipoles_lh, local_frames, lmax=2)
+    Qlocal = multipoles_lh
+    return Qglobal, Qlocal, local_frames
 
 def read_mpid_inputs(pdb, xml):
     '''
