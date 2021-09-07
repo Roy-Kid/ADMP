@@ -57,6 +57,7 @@
     \end{gather*}
     
     \subsection{Baby steps toward reciprocal space energy}
+    The Ewald summation is an reexpression of Coulomb's law in the discrete wavevector space.
     \subsubsection{Ewald}
     Periodicty is naturally incorporated into the smooth part charge density by spanning the gaussian with plane waves \(\qty{ \bf k}\), \begin{gather*}
         \bf n = \sum_i^3 n_j \bf a_j\\
@@ -99,7 +100,7 @@
     \begin{align*}
         \sum_{\bf m'} \theta(\bf R_{\bf m'}) \xi\pqty{\pqty{\bf r - \bf R_a} - \bf R_{\bf m'}} \approx \delta(\bf r -\bf R_a)
     \end{align*}
-    Here, \(\theta\) is Cardinal B-spline weighting function which is normalised upon summation over grid points \(m\) around the real atomic position \(\bf R_a\), \(\xi\) is the ``reciprocal'' function of \(\xi\) such that Dirac delta can be written as a convolution of \(\xi\) and \(\theta\). If the grid is resolved well enough, we can make \(\bf R_{\bf m'} \to \bf R_{\bf m'} - \bf R_a\). Letting \(\bf r = \bf R_{\bf m}\), 
+    Here, \(\theta\) is Cardinal B-spline weighting function, normalised upon summation over grid points \(m\) around the real atomic position \(\bf R_a\), \(\xi\) is the ``reciprocal'' function of \(\xi\) such that Dirac delta can be written as a convolution of \(\xi\) and \(\theta\). If the grid is resolved well enough, we can make \(\bf R_{\bf m'} \to \bf R_{\bf m'} - \bf R_a\). Letting \(\bf r = \bf R_{\bf m}\), 
     \begin{align*}
         \sum_{\bf m'} \theta(\bf R_{\bf m'} - \bf R_a) \xi\pqty{\bf R_{\bf m} - \bf R_{\bf m'}} = \delta(\bf R_{\bf m} - \bf R_a)
     \end{align*}

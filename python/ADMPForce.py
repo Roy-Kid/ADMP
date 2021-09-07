@@ -14,15 +14,6 @@ import mpidplugin
 
 from jax import value_and_grad, jit
 
-# see the python/mpidplugin.i code 
-ZThenX = 0
-Bisector = 1
-ZBisect = 2
-ThreeFold = 3
-Zonly = 4
-NoAxisType = 5
-LastAxisTypeIndex = 6
-
 # ----- pre-process section ----- #
 def setup_ewald_parameters(rc, ethresh, box):
     '''
@@ -214,6 +205,13 @@ def read_mpid_inputs(pdb, xml):
     params['dipoles'] = np.array(dipoles) * 10 # now in Angstrom
     params['quadrupoles'] = np.array(quadrupoles) * 3 * 100
     params['octupoles'] = np.array(octupoles) * 15 * 1000
+    
+    multipoles_lc = np.concatenate(
+        (params['charges'][:, np.newaxis], params['dipoles'], params['quadrupoles']), 
+        axis=1
+    )
+    params['multipoles_lh'] = convert_cart2harm(multipoles_lc, lmax=2)
+    
     params['axis_types'] = np.array(axis_types)
     params['axis_indices'] = np.array(axis_indices)
     params['tholes'] = np.array(tholes)

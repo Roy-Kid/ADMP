@@ -1,4 +1,6 @@
 from datetime import time, timedelta
+from functools import partial
+from jax._src.api import jit
 from jax.lax import fori_loop
 import numpy as np
 import jax.numpy as jnp
@@ -295,7 +297,7 @@ def calc_ePermCoef(mscales, kappa, dr):
 
     return cc, cd, dd_m0, dd_m1, cq, dq_m0, dq_m1, qq_m0, qq_m1, qq_m2
 
-def pme_real(positions, box, Q, kappa, covalent_map, mScales, pScales, dScales, nbs_obj):
+def pme_real(positions, Q, kappa, covalent_map, mScales, pScales, dScales, nbs_obj):
     '''
     This function computes the realspace part of PME interactions.
 
@@ -521,15 +523,13 @@ def pme_real(positions, box, Q, kappa, covalent_map, mScales, pScales, dScales, 
     
     return 0.5*(np.sum(qiQI*Vij)+np.sum(qiQJ*Vji))
 
-def pme_self(Q, lmax, kappa):
+def pme_self(Q_h, kappa, lmax = 2):
     '''
     This function calculates the PME self energy
 
     Inputs:
         Q:
-            N * (lmax+1)^2: the global harmonics multipoles
-        lmax:
-            int: largest L
+            N * (lmax+1)^2: harmonic multipoles, local or global does not matter
         kappa:
             float: kappa used in PME
 
@@ -537,21 +537,11 @@ def pme_self(Q, lmax, kappa):
         ene_self:
             float: the self energy
     '''
-    n_atoms = Q.shape[0]
-    n_harms = (lmax + 1) ** 2
-    Q = Q[:, 0:n_harms]  # only keep the terms we care
-    l_list = np.array([0], dtype=np.int64)
-    l_fac2 = np.array([1], dtype=np.int64)
-    tmp = 1
-    for l in range(1, lmax+1):
-        l_list = np.concatenate((l_list, np.ones(2*l+1, dtype=np.int64)*l))
-        tmp *= (2*l + 1)
-        l_fac2 = np.concatenate((l_fac2, np.ones(2*l+1, dtype=np.int64)*tmp))
-
-    l_list = np.repeat(l_list, n_atoms).reshape((-1, n_atoms)).T
-    l_fac2 = np.repeat(l_fac2, n_atoms).reshape((-1, n_atoms)).T
-    factor = kappa/np.sqrt(np.pi) * (2*kappa*kappa)**l_list / l_fac2
-    return - np.sum(factor * Q**2) * dielectric
+    n_harms = (lmax + 1) ** 2    
+    l_list = np.array([0]+[1,]*3+[2,]*5)[:n_harms]
+    l_fac2 = np.array([1]+[3,]*3+[15,]*5)[:n_harms]
+    factor = kappa/np.sqrt(np.pi) * (2*kappa**2)**l_list / l_fac2
+    return - jnp.sum(factor[np.newaxis] * Q_h**2) * dielectric
 
 def gen_pme_reciprocal(axis_type, axis_indices):
     construct_localframes = generate_construct_localframes(axis_type, axis_indices)
