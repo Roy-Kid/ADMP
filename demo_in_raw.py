@@ -44,7 +44,7 @@ Q_global, Q_local, local_frames = get_mtpls_global(positions, box, mpid_params, 
 def calc_energy(positions, box, Q_local, lmax, polarizabilities, rc, kappa, covalent_map, mScales, pScales, dScales):
     box_inv = np.linalg.inv(box)
     Q_global = rot_local2global(Q_local, local_frames, lmax=2)
-    neighlist = neighlist = construct_nblist(positions, box, rc)
+    neighlist = construct_nblist(positions, box, rc)
     
     energy = 0
     energy += pme_real(positions, box, Q_global, lmax, box_inv, polarizabilities, rc, kappa, covalent_map, mScales, pScales, dScales, neighlist)

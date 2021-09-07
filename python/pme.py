@@ -1,11 +1,9 @@
 from datetime import time, timedelta
-import re
-import jax
+from functools import partial
+from jax._src.api import jit
 from jax.lax import fori_loop
 import numpy as np
 import jax.numpy as jnp
-
-from tqdm import trange
 
 from math import erf
 
@@ -16,7 +14,18 @@ from .utils import rot_global2local, rot_local2global
 
 dielectric = 1389.35455846 # in e^2/A
 
-def generate_construct_local_frame(axis_types, axis_indices):
+def generate_construct_localframes(axis_types, axis_indices):
+    """
+    Generates the local frame constructor, common to the same physical system
+    inputs:
+        axis_types:
+            types of local frame transformation rules for each atom.
+        axis_indices:
+            z,x,y atoms of each local frame.
+    outputs:
+        construct_localframes:
+            function type (positions, box) -> local_frames
+    """
     ZThenX            = 0
     Bisector          = 1
     ZBisect           = 2
@@ -36,24 +45,24 @@ def generate_construct_local_frame(axis_types, axis_indices):
     ThreeFold_filter = (axis_types == ThreeFold)
     
     def pbc_shift(drvecs, box, box_inv):
-            '''
-            Dealing with the pbc shifts of vectors
+        '''
+        Dealing with the pbc shifts of vectors
 
-            Inputs:
-                rvecs:
-                    N * 3, a list of real space vectors in Cartesian
-                box:
-                    3 * 3, box matrix, with axes arranged in rows
-                box_inv:
-                    3 * 3, inverse of box matrix
+        Inputs:
+            rvecs:
+                N * 3, a list of real space vectors in Cartesian
+            box:
+                3 * 3, box matrix, with axes arranged in rows
+            box_inv:
+                3 * 3, inverse of box matrix
 
-            Outputs:
-                rvecs:
-                    N * 3, vectors that have been shifted, in Cartesian
-            '''
-            unshifted_dsvecs = drvecs.dot(box_inv)
-            dsvecs = unshifted_dsvecs - jnp.floor(unshifted_dsvecs + 0.5)
-            return dsvecs.dot(box)
+        Outputs:
+            rvecs:
+                N * 3, vectors that have been shifted, in Cartesian
+        '''
+        unshifted_dsvecs = drvecs.dot(box_inv)
+        dsvecs = unshifted_dsvecs - jnp.floor(unshifted_dsvecs + 0.5)
+        return dsvecs.dot(box)
         
     def normalize(matrix, axis=1, ord=2):
         '''
@@ -63,7 +72,6 @@ def generate_construct_local_frame(axis_types, axis_indices):
         return normalised
     
     def c_l_f(positions, box):
-        config.update("jax_enable_x64", True)
         '''
         This function constructs the local frames for each site
 
@@ -289,7 +297,7 @@ def calc_ePermCoef(mscales, kappa, dr):
 
     return cc, cd, dd_m0, dd_m1, cq, dq_m0, dq_m1, qq_m0, qq_m1, qq_m2
 
-def pme_real(positions, box, Q, lmax, mu_ind, polarizabilities, rc, kappa, covalent_map, mScales, pScales, dScales, nbs_obj):
+def pme_real(positions, Q, kappa, covalent_map, mScales, pScales, dScales, nbs_obj):
     '''
     This function computes the realspace part of PME interactions.
 
@@ -342,16 +350,12 @@ def pme_real(positions, box, Q, lmax, mu_ind, polarizabilities, rc, kappa, coval
     pScales = np.concatenate([pScales, np.array([1])])
     dScales = np.concatenate([dScales, np.array([1])])
 
-
-    covalent_map = covalent_map.multiply(covalent_map<=max_excl)
-
     # neighbor list
     n_nbs = nbs_obj.n_nbs
     max_n_nbs = np.max(n_nbs)
     nbs = nbs_obj.nbs[:, 0:max_n_nbs]
     dr_vecs = nbs_obj.dr_vecs[:, 0:max_n_nbs]
     drdr = nbs_obj.distances2[:, 0:max_n_nbs]
-    box_inv = np.linalg.inv(box)
     n_atoms = len(positions)
     
     t = np.sum(n_nbs)
@@ -388,8 +392,8 @@ def pme_real(positions, box, Q, lmax, mu_ind, polarizabilities, rc, kappa, coval
     for i, pair in enumerate(pairs):
         
         # get [m-p-d]scale
-        cmap = covalent_map[pair[0], :].toarray()
-        nbond = cmap[0, pair[1]]
+
+        nbond = covalent_map[pair[0]][pair[1]]
         mscale = mScales[nbond-1]
         mscales[i] = mscale
 
@@ -519,15 +523,13 @@ def pme_real(positions, box, Q, lmax, mu_ind, polarizabilities, rc, kappa, coval
     
     return 0.5*(np.sum(qiQI*Vij)+np.sum(qiQJ*Vji))
 
-def pme_self(Q, lmax, kappa):
+def pme_self(Q_h, kappa, lmax = 2):
     '''
     This function calculates the PME self energy
 
     Inputs:
         Q:
-            N * (lmax+1)^2: the global harmonics multipoles
-        lmax:
-            int: largest L
+            N * (lmax+1)^2: harmonic multipoles, local or global does not matter
         kappa:
             float: kappa used in PME
 
@@ -535,24 +537,14 @@ def pme_self(Q, lmax, kappa):
         ene_self:
             float: the self energy
     '''
-    n_atoms = Q.shape[0]
-    n_harms = (lmax + 1) ** 2
-    Q = Q[:, 0:n_harms]  # only keep the terms we care
-    l_list = np.array([0], dtype=np.int64)
-    l_fac2 = np.array([1], dtype=np.int64)
-    tmp = 1
-    for l in range(1, lmax+1):
-        l_list = np.concatenate((l_list, np.ones(2*l+1, dtype=np.int64)*l))
-        tmp *= (2*l + 1)
-        l_fac2 = np.concatenate((l_fac2, np.ones(2*l+1, dtype=np.int64)*tmp))
-
-    l_list = np.repeat(l_list, n_atoms).reshape((-1, n_atoms)).T
-    l_fac2 = np.repeat(l_fac2, n_atoms).reshape((-1, n_atoms)).T
-    factor = kappa/np.sqrt(np.pi) * (2*kappa*kappa)**l_list / l_fac2
-    return - np.sum(factor * Q**2) * dielectric
+    n_harms = (lmax + 1) ** 2    
+    l_list = np.array([0]+[1,]*3+[2,]*5)[:n_harms]
+    l_fac2 = np.array([1]+[3,]*3+[15,]*5)[:n_harms]
+    factor = kappa/np.sqrt(np.pi) * (2*kappa**2)**l_list / l_fac2
+    return - jnp.sum(factor[np.newaxis] * Q_h**2) * dielectric
 
 def gen_pme_reciprocal(axis_type, axis_indices):
-    construct_local_frame = generate_construct_local_frame(axis_type, axis_indices)
+    construct_localframes = generate_construct_localframes(axis_type, axis_indices)
     def pme_reciprocal_on_Qgh(positions, box, Q, kappa, lmax, K1, K2, K3):
         '''
         This function calculates the PME reciprocal space energy
@@ -577,8 +569,8 @@ def gen_pme_reciprocal(axis_type, axis_indices):
         '''
         N = np.array([K1,K2,K3])
         ################
-        padder = jnp.arange(-3, 3)
-        shifts = jnp.array(jnp.meshgrid(padder, padder, padder)).T.reshape((1, 216, 3))
+        bspline_range = jnp.arange(-3, 3)
+        shifts = jnp.array(jnp.meshgrid(bspline_range, bspline_range, bspline_range)).T.reshape((1, 216, 3))
         
         def get_recip_vectors(N, box):
             """
@@ -948,7 +940,7 @@ def gen_pme_reciprocal(axis_type, axis_indices):
         return E_recip*dielectric
 
     def pme_reciprocal(positions, box,  Q_lh, kappa, lmax, K1, K2, K3):
-        localframes = construct_local_frame(positions, box)
+        localframes = construct_localframes(positions, box)
         Q_gh = rot_local2global(Q_lh, localframes, lmax)
         return pme_reciprocal_on_Qgh(positions, box, Q_gh, kappa, lmax, K1, K2, K3)
     return pme_reciprocal
