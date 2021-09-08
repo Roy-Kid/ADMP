@@ -10,7 +10,6 @@ from math import erf
 from jax.config import config
 config.update("jax_enable_x64", True)
 
-from .utils import rot_global2local, rot_local2global
 
 dielectric = 1389.35455846 # in e^2/A
 
