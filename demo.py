@@ -1,10 +1,11 @@
-from python.neiV2 import construct_nblist as cnbl2
 from python.utils import convert_cart2harm
 import numpy as np
-
-from python.neighborList import construct_nblist
+import jax.numpy as jnp
 from python.parser import assemble_covalent, init_residues, read_pdb, read_xml
 from python.pme import pme_real, generate_construct_localframes, rot_local2global
+
+import jax
+jax.profiler.start_trace("/tmp/tensorboard")
 
 pdb = 'tests/samples/waterdimer_aligned.pdb'
 xml = 'tests/samples/mpidwater.xml'
@@ -76,34 +77,26 @@ positions[0:3] = positions[0:3].dot(R1)
 positions[3:6] = positions[3:6].dot(R2)
 positions[3:] += np.array([3.0, 0.0, 0.0])
 
-neighList = construct_nblist(positions, box, rc)
-
-import time, jax
-start = time.time()
-nbs, distances2, dr_vecs = jax.jacfwd(cnbl2)(positions, box, rc)
-end = time.time()
-print(end - start)
-
-
-local_frames = generate_construct_localframes(axis_type, axis_indices)(positions, box)
-
-Qglobal = rot_local2global(Qlocal, local_frames, 2)
-
-e = pme_real(positions, Qglobal, kappa, covalent_map, mScales, pScales, dScales, neighList)
-
+e = pme_real(positions, box, rc, Qlocal, generate_construct_localframes(axis_type, axis_indices), kappa, covalent_map, mScales, pScales, dScales)
 print(e)
 
-# from openmm.app import *
-# from openmm import *
-# from openmm.unit import *
-# import mpidplugin
+print('auto diff: ')
+positions = jnp.asarray(positions)
+box = jnp.asarray(box)
+dreal = jax.grad(pme_real, argnums=0)
+f = dreal(positions, box, rc, Qlocal, generate_construct_localframes(axis_type, axis_indices), kappa, covalent_map, mScales, pScales, dScales)
+print(f)
 
-# pdb = PDBFile(pdb)
-# forcefield = ForceField(xml)
-# system = forcefield.createSystem(pdb.topology, nonbondedMethod=LJPME, nonbondedCutoff=8*angstrom, constraints=HBonds, defaultTholeWidth=8)
-# integrator = VerletIntegrator(1e-10*femtoseconds)
-# simulation = Simulation(pdb.topology, system, integrator)
-# context = simulation.context
-# context.setPositions(positions*angstrom)
-# state = context.getState(getEnergy=True, getPositions=True)
-# Etot = state.getPotentialEnergy().value_in_unit(kilojoules_per_mole)
+# finite differences
+# findiff = np.empty((6, 3))
+# eps = 1e-4
+# delta = np.zeros((6,3)) 
+# for i in range(6): 
+#   for j in range(3): 
+#     delta[i][j] = eps 
+#     findiff[i][j] = (pme_real(positions+delta/2, box, rc, Qlocal, generate_construct_localframes(axis_type, axis_indices), kappa, covalent_map, mScales, pScales, dScales) - pme_real(positions-delta/2, box, rc, Qlocal, generate_construct_localframes(axis_type, axis_indices), kappa, covalent_map, mScales, pScales, dScales))/eps
+#     delta[i][j] = 0
+# print('partial diff')
+# print(findiff)
+
+jax.profiler.stop_trace()

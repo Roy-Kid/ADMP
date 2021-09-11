@@ -24,6 +24,17 @@ class LinkedList:
             return [self.map[k] for k in self.indices[i]]
         else:
             return self.map[self.indices[tuple(i)]]
+        
+        
+class NBLS:
+    '''
+    The container object for neighbour list information
+    '''
+    
+    def __init__(self, nbs, distances2, dr_vecs):
+        self.nbs = nbs
+        self.distances2 = distances2
+        self.dr_vecs = dr_vecs
 
 def construct_nblist(positions, box, rc):
     box_inv = np.linalg.inv(box)
@@ -38,9 +49,9 @@ def construct_nblist(positions, box, rc):
     cell_inv = np.linalg.inv(cell)
 
     upositions = positions.dot(cell_inv)
-    indices = jnp.floor(upositions).astype(jnp.int32)
+    indices = np.floor(upositions).astype(np.int32)
     # for safty, do pbc shift
-    indices = jnp.mod(indices, n_cells[jnp.newaxis])
+    indices = np.mod(indices, n_cells[np.newaxis])
     na, nb, nc = n_cells
     cell_list = LinkedList((na, nb, nc))
 
@@ -69,9 +80,9 @@ def construct_nblist(positions, box, rc):
                                     ri = positions[catom]
                                     rj = positions[natom]
                                     dr = ri - rj
-                                    ds = jnp.dot(dr, box_inv)
-                                    ds -= jnp.floor(ds+0.5)
-                                    dr = jnp.dot(ds, box)
+                                    ds = np.dot(dr, box_inv)
+                                    ds -= np.floor(ds+0.5)
+                                    dr = np.dot(ds, box)
                                     drdr = dr@dr
                                     if drdr < rc2:
                                         if natom not in nbs[catom] and natom != catom:
@@ -83,7 +94,5 @@ def construct_nblist(positions, box, rc):
                                             distances2[natom].append(drdr)
                                             dr_vecs[natom].append(-dr)
     
-    nbs = jnp.array([nbs[i_atom] for i_atom in range(n_atoms)])
-    distances2 = jnp.array([distances2[i_atom] for i_atom in range(n_atoms)])
-    dr_vecs = jnp.array([dr_vecs[i_atom] for i_atom in range(n_atoms)])
-    return nbs, distances2, dr_vecs
+    # return nbs, distances2, dr_vecs
+    return NBLS(nbs, distances2, dr_vecs)
