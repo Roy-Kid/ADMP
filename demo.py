@@ -1,8 +1,10 @@
-from python.utils import convert_cart2harm
+from python.neiV2 import construct_nblist as cnbl2
+
 import numpy as np
 import jax.numpy as jnp
 from python.parser import assemble_covalent, init_residues, read_pdb, read_xml
 from python.pme import pme_real, generate_construct_localframes, rot_local2global
+
 
 import jax
 jax.profiler.start_trace("/tmp/tensorboard")
@@ -100,3 +102,36 @@ print(f)
 # print(findiff)
 
 jax.profiler.stop_trace()
+
+neighList = construct_nblist(positions, box, rc)
+
+import time, jax
+start = time.time()
+nbs, distances2, dr_vecs = jax.jacfwd(cnbl2)(positions, box, rc)
+end = time.time()
+print(end - start)
+
+
+local_frames = generate_construct_localframes(axis_type, axis_indices)(positions, box)
+
+Qglobal = rot_local2global(Qlocal, local_frames, 2)
+
+e = pme_real(positions, Qglobal, kappa, covalent_map, mScales, pScales, dScales, neighList)
+
+print(e)
+
+# from openmm.app import *
+# from openmm import *
+# from openmm.unit import *
+# import mpidplugin
+
+# pdb = PDBFile(pdb)
+# forcefield = ForceField(xml)
+# system = forcefield.createSystem(pdb.topology, nonbondedMethod=LJPME, nonbondedCutoff=8*angstrom, constraints=HBonds, defaultTholeWidth=8)
+# integrator = VerletIntegrator(1e-10*femtoseconds)
+# simulation = Simulation(pdb.topology, system, integrator)
+# context = simulation.context
+# context.setPositions(positions*angstrom)
+# state = context.getState(getEnergy=True, getPositions=True)
+# Etot = state.getPotentialEnergy().value_in_unit(kilojoules_per_mole)
+
