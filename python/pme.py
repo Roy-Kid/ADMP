@@ -1,12 +1,8 @@
-from datetime import time, timedelta
-from functools import partial
-from jax._src.api import jit
+from python.neiV3 import construct_nblist
 from jax.lax import fori_loop
 import numpy as np
 import jax.numpy as jnp
-
-from math import erf
-
+from jax.scipy.special import erf
 from jax.config import config
 config.update("jax_enable_x64", True)
 
@@ -248,18 +244,18 @@ def calc_ePermCoef(mscales, kappa, dr):
     rInvVec = jnp.array([prefactor/dr**i for i in range(0, 9)])
     assert (rInvVec[1] == prefactor / dr).all()
     
-    alphaRVec = np.array([(kappa*dr)**i for i in range(0, 10)])
+    alphaRVec = jnp.array([(kappa*dr)**i for i in range(0, 10)])
     assert (alphaRVec[1] == kappa * dr).all()
     
-    X = 2 * np.exp( -alphaRVec[2] ) / np.sqrt(np.pi)
-    tmp = np.array(alphaRVec[1])
+    X = 2 * jnp.exp( -alphaRVec[2] ) / jnp.sqrt(np.pi)
+    tmp = jnp.array(alphaRVec[1])
     doubleFactorial = 1
     facCount = 1
-    erfAlphaR = np.array(list(map(erf, alphaRVec[1])))
-    bVec = np.empty((6, len(erfAlphaR)))
-    bVec[1] = -erfAlphaR
+    erfAlphaR = erf(alphaRVec[1])
+    bVec = jnp.empty((6, len(erfAlphaR)))
+    bVec = bVec.at[1].set(-erfAlphaR)
     for i in range(2, 6):
-        bVec[i] = bVec[i-1]+tmp*X/doubleFactorial
+        bVec = bVec.at[i].set(bVec[i-1]+tmp*X/doubleFactorial)
         facCount += 2
         doubleFactorial *= facCount
         tmp *= 2 * alphaRVec[2]
@@ -286,7 +282,7 @@ def calc_ePermCoef(mscales, kappa, dr):
     ## D-Q: 2
     
     dq_m0 = rInvVec[4] * (3* (mscales + bVec[3])+ (4/3) * alphaRVec[5]*X)
-    dq_m1 = -np.sqrt(3)*rInvVec[4]*(mscales+bVec[3])
+    dq_m1 = -jnp.sqrt(3)*rInvVec[4]*(mscales+bVec[3])
     
     ## Q-Q
     
@@ -296,7 +292,7 @@ def calc_ePermCoef(mscales, kappa, dr):
 
     return cc, cd, dd_m0, dd_m1, cq, dq_m0, dq_m1, qq_m0, qq_m1, qq_m2
 
-def pme_real(positions, Q, kappa, covalent_map, mScales, pScales, dScales, nbs_obj):
+def pme_real(positions, box, rc, Qlocal, construct_localframes, kappa, covalent_map, mScales, pScales, dScales):
     '''
     This function computes the realspace part of PME interactions.
 
@@ -305,20 +301,18 @@ def pme_real(positions, Q, kappa, covalent_map, mScales, pScales, dScales, nbs_o
             N * 3, positions of all atoms, in ANGSTROM
         box:
             3 * 3, box size, axes arranged in rows, in ANGSTROM
-        Q:
-            N * (lmax+1)^2, fixed multipole moments in global spherical harmonics
-        lmax:
-            int, maximum order of multipoles
-        mu_ind:
-            N * 3, induced dipoles, in global spherical harmonics
-        polarizabilities:
-            N * 3 * 3, the polarizability tensor of each site, UNIT TO BE DETERMINED...
-        rc:
-            float, cutoff distance, in ANGSTROM
+        rc: 
+            float, radius of cutoff, in ANGSTROM
+        Qlocal:
+            N * (lmax+1)^2, fixed multipole moments in local spherical harmonics
+        construct_localframes:
+            function: to construct localframes
+                Iputs:
+                    positions, box
         kappa:
             float, the short range attenuation in PME, in ANGSTROM^-1
         covalent_map:
-            N * N, in scipy csr sparse matix form, each row specifies the covalent neighbors of each atom
+            N * N, in ndarray, each row specifies the covalent neighbors of each atom
             0 means not covalent neighor, 1 means one bond away, 2 means two bonds away etc.
         mScales:
             len(n) vector, the fixed multipole - fixed multipole interaction damping coefficients, (n) is the
@@ -327,8 +321,6 @@ def pme_real(positions, Q, kappa, covalent_map, mScales, pScales, dScales, nbs_o
             len(n) vector, the fixed multipole - induced dipole scalings
         dScales:
             len(n) vector, the induced - induced dipole scalings
-        obs_obj:
-            neighbor list objects, as in the ml_ff module
 
     Outputs:
         ene_real: 
@@ -337,190 +329,114 @@ def pme_real(positions, Q, kappa, covalent_map, mScales, pScales, dScales, nbs_o
     
     # The following is written by Roy Kid
     # any confusion please email lijichen365@126.com directly 
-
-    # a bit preprocessing to scaling factors
-    max_excl = len(mScales)
-    assert(len(mScales) == len(pScales))
-    assert(len(mScales) == len(dScales))
     
-    # an explain: 
-    # "1" padding is for <get [mpd]scale> section
-    mScales = np.concatenate([mScales, np.array([1])])
-    pScales = np.concatenate([pScales, np.array([1])])
-    dScales = np.concatenate([dScales, np.array([1])])
-
-    # neighbor list
-    n_nbs = nbs_obj.n_nbs
-    max_n_nbs = np.max(n_nbs)
-    nbs = nbs_obj.nbs[:, 0:max_n_nbs]
-    dr_vecs = nbs_obj.dr_vecs[:, 0:max_n_nbs]
-    drdr = nbs_obj.distances2[:, 0:max_n_nbs]
-    n_atoms = len(positions)
+    nbs_obj = construct_nblist(positions, box, rc)
     
-    t = np.sum(n_nbs)
-    tot_pair = np.empty((t, 2), dtype=int)
-    drs = np.empty((t, 3))
-    drdrs = np.empty((t, ))
-    for i_atom in range(n_atoms):
-        
-        start = np.sum(n_nbs[0:i_atom])
-        end = np.sum(n_nbs[0:i_atom]) + n_nbs[i_atom]
-        
-        tot_pair[start: end, 0] = i_atom
-        tot_pair[start: end, 1] = nbs[i_atom, 0: n_nbs[i_atom]]
-        
-        drs[start: end, :] = dr_vecs[i_atom, 0: n_nbs[i_atom]]
-        drdrs[start: end] = drdr[i_atom, 0: n_nbs[i_atom]]
-        
-        
-    # a filter that exclude those pairs 
-    # that atomid of pair[0] < pair[1]
-    # to avoid double counting
-    pairs = tot_pair[tot_pair[:, 0] < tot_pair[:, 1]]
-    drs = drs[tot_pair[:, 0] < tot_pair[:, 1]]
-    drdrs = drdrs[tot_pair[:, 0] < tot_pair[:, 1]]
-    distances = drdrs**0.5
-    assert len(pairs) == len(drs)
-    npair = len(pairs)
-
-    mscales = np.empty((npair, ))
-    Ri = np.empty((npair, 3, 3))
-    Q_extendi = np.empty((npair, Q.shape[1]))
-    Q_extendj = np.empty((npair, Q.shape[1]))
+    local_frames = construct_localframes(positions, box)
     
-    for i, pair in enumerate(pairs):
-        
-        # get [m-p-d]scale
+    Qglobal = rot_local2global(Qlocal, local_frames, 2)
 
-        nbond = covalent_map[pair[0]][pair[1]]
-        mscale = mScales[nbond-1]
-        mscales[i] = mscale
+    mScales = jnp.concatenate([mScales, jnp.array([1])])
+    pScales = jnp.concatenate([pScales, jnp.array([1])])
+    dScales = jnp.concatenate([dScales, jnp.array([1])])
 
-        # form rotation matrix
-        # transfer from MPIDReferenceForce.cpp line 1055
-        iPos = positions[pair[0]]
-        jPos = positions[pair[1]]
-        deltaR = drs[i]
-        r = distances[i]
-        vectorZ = deltaR/r
-        vectorX = np.array(vectorZ)
-        if iPos[1] != jPos[1] or iPos[2] != jPos[2]:
-            vectorX[0] += 1
-        else:
-            vectorX[1] += 1
-        dot = np.dot(vectorZ, vectorX)
-        vectorX -= vectorZ*dot
-        vectorX = vectorX / np.linalg.norm(vectorX)
-        vectorY = np.cross(vectorZ, vectorX)
-        Ri[i] = np.array([vectorX, vectorY, vectorZ])
+    pairs = jnp.array(nbs_obj.nbs)
+    distances2 = jnp.array(nbs_obj.distances2)
+    distances = jnp.sqrt(distances2)
+    dr_vecs = nbs_obj.dr_vecs
+    Ri = jnp.array(nbs_obj.R)
+    
+    nbonds = covalent_map[pairs[:, 0], pairs[:, 1]]
+    mscales = mScales[nbonds-1]
+    
+    # construct rotation matrix
 
-        # match Q global with pair
-        # pair:= [[i, j]] 
-        # Qi  :=  [i]       
-        # Qj  :=     [j]
-        Q_extendi[i] = Q[pair[0]]
-        Q_extendj[i] = Q[pair[1]]
+    Q_extendi = Qglobal[pairs[:, 0]]
+    Q_extendj = Qglobal[pairs[:, 1]]
 
-    # as we extending to octupole
-    # todo: 2->3
-    # add lmax 2->3 support in rot_global2local
     qiQI = rot_global2local(Q_extendi, Ri, 2)
     qiQJ = rot_global2local(Q_extendj, Ri, 2)
 
-    # TODO: support lmax to control what order needed
     cc, cd, dd_m0, dd_m1, cq, dq_m0, dq_m1, qq_m0, qq_m1, qq_m2 = calc_ePermCoef(mscales, kappa, distances)
     
-    # as we extending to octupole
-    # todo: 9->16
-    Vij = np.empty((len(qiQJ), 9))
-    Vji = np.empty((len(qiQI), 9))
-    
-    # transfer from
-    # calculatePmeDirectElectrostaticPairIxn
-    # C-C
 
-    # The vertorize is used
-    # once extend to octupole
-    # remember that add a column 
-    # in the front of index of Vij/qiQJ etc.
-    # all the pair's info are hstack to form 2D array.
-    # MPID: Vij[0] = ePermCoeff*qiQJ[0]
-    # pme : Vij[:, 0] = cc*qiQJ[:, 0]
-    # to calculate all the pairs at one time
-
-    Vij[:, 0] = cc*qiQJ[:, 0]
-    Vji[:, 0] = cc*qiQI[:, 0]
+    Vij0 = cc*qiQJ[:, 0]
+    Vji0 = cc*qiQI[:, 0]
 
     # C-D 
-
-    Vij[:, 0] += -cd*qiQJ[:, 1]
-    Vji[:, 1] = -cd*qiQI[:, 0]
-    Vij[:, 1] = cd*qiQJ[:, 0]
-    Vji[:, 0] += cd*qiQI[:, 1]
+    
+    Vij0 = Vij0 - cd*qiQJ[:, 1]
+    Vji1 = -cd*qiQI[:, 0]
+    Vij1 = cd*qiQJ[:, 0]
+    Vji0 = Vji0 + cd*qiQI[:, 1]
 
     # D-D m0 
-
-    Vij[:, 1] += dd_m0 * qiQJ[:, 1]
-    Vji[:, 1] += dd_m0 * qiQI[:, 1]
+    
+    Vij1 += dd_m0 * qiQJ[:, 1]
+    Vji1 += dd_m0 * qiQI[:, 1]
     
     # D-D m1 
-
-    Vij[:, 2] = dd_m1*qiQJ[:, 2]
-    Vji[:, 2] = dd_m1*qiQI[:, 2]
-    Vij[:, 3] = dd_m1*qiQJ[:, 3]
-    Vji[:, 3] = dd_m1*qiQI[:, 3]
+    
+    Vij2 = dd_m1*qiQJ[:, 2]
+    Vji2 = dd_m1*qiQI[:, 2]
+    Vij3 = dd_m1*qiQJ[:, 3]
+    Vji3 = dd_m1*qiQI[:, 3]
 
     # C-Q
     
-    Vij[:, 0]  += cq*qiQJ[:, 4]
-    Vji[:, 4]   = cq*qiQI[:, 0]
-    Vij[:, 4]   = cq*qiQJ[:, 0]
-    Vji[:, 0]  += cq*qiQI[:, 4]
+    Vij0 = Vij0 + cq*qiQJ[:, 4]
+    Vji4 = cq*qiQI[:, 0]
+    Vij4 = cq*qiQJ[:, 0]
+    Vji0 = Vji0 + cq*qiQI[:, 4]
     
     # D-Q m0
     
-    Vij[:, 1]  += dq_m0*qiQJ[:, 4]
-    Vji[:, 4]  += dq_m0*qiQI[:, 1] 
+    Vij1 += dq_m0*qiQJ[:, 4]
+    Vji4 += dq_m0*qiQI[:, 1] 
     
     # Q-D m0
     
-    Vij[:, 4]  += -(dq_m0*qiQJ[:, 1])
-    Vji[:, 1]  += -(dq_m0*qiQI[:, 4])
+    Vij4 -= dq_m0*qiQJ[:, 1]
+    Vji1 -= dq_m0*qiQI[:, 4]
     
     # D-Q m1
     
-    Vij[:, 2]  += dq_m1*qiQJ[:, 5]
-    Vji[:, 5]   = dq_m1*qiQI[:, 2]
+    Vij2 = Vij2 + dq_m1*qiQJ[:, 5]
+    Vji5 = dq_m1*qiQI[:, 2]
 
-    Vij[:, 3]  += dq_m1*qiQJ[:, 6]
-    Vji[:, 6]   = dq_m1*qiQI[:, 3]
-
-    Vij[:, 5]   = -(dq_m1*qiQJ[:, 2])
-    Vji[:, 2]  += -(dq_m1*qiQI[:, 5])
+    Vij3 += dq_m1*qiQJ[:, 6]
+    Vji6 = dq_m1*qiQI[:, 3]
     
-    Vij[:, 6]   = -(dq_m1*qiQJ[:, 3])
-    Vji[:, 3]  += -(dq_m1*qiQI[:, 6])
+    Vij5 = -(dq_m1*qiQJ[:, 2])
+    Vji2 += -(dq_m1*qiQI[:, 5])
+    
+    Vij6 = -(dq_m1*qiQJ[:, 3])
+    Vji3 += -(dq_m1*qiQI[:, 6])
     
     # Q-Q m0
     
-    Vij[:, 4]  += qq_m0*qiQJ[:, 4]
-    Vji[:, 4]  += qq_m0*qiQI[:, 4]    
+    Vij4 += qq_m0*qiQJ[:, 4]
+    Vji4 += qq_m0*qiQI[:, 4] 
     
     # Q-Q m1
     
-    Vij[:, 5]  += qq_m1*qiQJ[:, 5]
-    Vji[:, 5]  += qq_m1*qiQI[:, 5]
-    Vij[:, 6]  += qq_m1*qiQJ[:, 6]
-    Vji[:, 6]  += qq_m1*qiQI[:, 6]
+    Vij5 += qq_m1*qiQJ[:, 5]
+    Vji5 += qq_m1*qiQI[:, 5]
+    Vij6 += qq_m1*qiQJ[:, 6]
+    Vji6 += qq_m1*qiQI[:, 6]
     
     # Q-Q m2
     
-    Vij[:, 7]  = qq_m2*qiQJ[:, 7]
-    Vji[:, 7]  = qq_m2*qiQI[:, 7]
-    Vij[:, 8]  = qq_m2*qiQJ[:, 8]
-    Vji[:, 8]  = qq_m2*qiQI[:, 8]
+    Vij7  = qq_m2*qiQJ[:, 7]
+    Vji7  = qq_m2*qiQI[:, 7]
+    Vij8  = qq_m2*qiQJ[:, 8]
+    Vji8  = qq_m2*qiQI[:, 8]
     
-    return 0.5*(np.sum(qiQI*Vij)+np.sum(qiQJ*Vji))
+    Vij = jnp.vstack((Vij0, Vij1, Vij2, Vij3, Vij4, Vij5, Vij6, Vij7, Vij8))
+    Vji = jnp.vstack((Vji0, Vji1, Vji2, Vji3, Vji4, Vji5, Vji6, Vji7, Vji8))
+
+    
+    return 0.5*(jnp.sum(qiQI*Vij.T)+jnp.sum(qiQJ*Vji.T))
 
 def pme_self(Q_h, kappa, lmax = 2):
     '''
