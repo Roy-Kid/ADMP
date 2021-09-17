@@ -1,13 +1,10 @@
-from python.neiV2 import construct_nblist as cnbl2
+# from python.neiV2 import construct_nblist as cnbl2
 
+from python.utils import convert_cart2harm
 import numpy as np
 import jax.numpy as jnp
 from python.parser import assemble_covalent, init_residues, read_pdb, read_xml
-from python.pme import pme_real, generate_construct_localframes, rot_local2global
-
-
-import jax
-jax.profiler.start_trace("/tmp/tensorboard")
+from python.pme import pme_real, generate_construct_localframes, rot_local2global, rot_global2local
 
 pdb = 'tests/samples/waterdimer_aligned.pdb'
 xml = 'tests/samples/mpidwater.xml'
@@ -79,15 +76,18 @@ positions[0:3] = positions[0:3].dot(R1)
 positions[3:6] = positions[3:6].dot(R2)
 positions[3:] += np.array([3.0, 0.0, 0.0])
 
-e = pme_real(positions, box, rc, Qlocal, generate_construct_localframes(axis_type, axis_indices), kappa, covalent_map, mScales, pScales, dScales)
-print(e)
+local_frames = generate_construct_localframes(axis_type, axis_indices)(positions, box)
+Qglobal = rot_local2global(Qlocal, local_frames, 2)
 
-print('auto diff: ')
-positions = jnp.asarray(positions)
-box = jnp.asarray(box)
-dreal = jax.grad(pme_real, argnums=0)
-f = dreal(positions, box, rc, Qlocal, generate_construct_localframes(axis_type, axis_indices), kappa, covalent_map, mScales, pScales, dScales)
-print(f)
+# e = pme_real(positions, box, rc, Qlocal, generate_construct_localframes(axis_type, axis_indices), kappa, covalent_map, mScales, pScales, dScales)
+# print(e)
+
+# print('auto diff: ')
+# positions = jnp.asarray(positions)
+# box = jnp.asarray(box)
+# dreal = jax.grad(pme_real, argnums=0)
+# f = dreal(positions, box, rc, Qlocal, generate_construct_localframes(axis_type, axis_indices), kappa, covalent_map, mScales, pScales, dScales)
+# print(f)
 
 # finite differences
 # findiff = np.empty((6, 3))
@@ -101,37 +101,55 @@ print(f)
 # print('partial diff')
 # print(findiff)
 
-jax.profiler.stop_trace()
+from jax_md import space
+from jax_md import partition
+from jax import vmap
+R = jnp.asarray(positions)
+rc = 4
+box_size = 32
+cell_size = rc
+displacement_fn, shift_fn = space.periodic(box_size)
+neighbor_list_fn = partition.neighbor_list(displacement_fn, box_size, cell_size, 0.2*rc)
+neighbor = neighbor_list_fn(R)
 
-neighList = construct_nblist(positions, box, rc)
+d = vmap(vmap(displacement_fn, (None, 0)))
+mask = neighbor.idx != R.shape[0]
+R_neigh = R[neighbor.idx]
+dR = d(R, R_neigh)
 
-import time, jax
-start = time.time()
-nbs, distances2, dr_vecs = jax.jacfwd(cnbl2)(positions, box, rc)
-end = time.time()
-print(end - start)
+def qi(r1, r2):
+    
+    dr = displacement_fn(r1, r2)
+    vectorZ = dr/jnp.linalg.norm(dr)
+    vectorX = jnp.where(jnp.logical_or(r1[1] != r2[1], r1[2]!=r2[2]), vectorZ+jnp.array([1., 0., 0.]), vectorZ + jnp.array([0., 1., 0.]))
+    dot = jnp.dot(vectorZ, vectorX)
+    vectorX -= vectorZ * dot
+    vectorX = vectorX / jnp.linalg.norm(vectorX)
+    vectorY = jnp.cross(vectorZ, vectorX)
+    return jnp.array([vectorX, vectorY, vectorZ])
 
+vvqi = vmap(vmap(qi, (None, 0)), (0, 0))
+Ri = vvqi(R, R_neigh)
+Ri = Ri[mask]
 
-local_frames = generate_construct_localframes(axis_type, axis_indices)(positions, box)
+# so far is right.
 
-Qglobal = rot_local2global(Qlocal, local_frames, 2)
+pairs = np.empty((Ri.shape[0], 2), dtype=int)
 
-e = pme_real(positions, Qglobal, kappa, covalent_map, mScales, pScales, dScales, neighList)
+i = 0
+for j, neighmk in enumerate(zip(neighbor.idx, mask)):
+    neigh, mk = neighmk
+    nei = neigh[mk]
+    nnei = len(neigh[mk])
+    pairs[i:i+nnei, 0] = j
+    pairs[i:i+nnei, 1] = nei
+    i += nnei
 
-print(e)
-
-# from openmm.app import *
-# from openmm import *
-# from openmm.unit import *
-# import mpidplugin
-
-# pdb = PDBFile(pdb)
-# forcefield = ForceField(xml)
-# system = forcefield.createSystem(pdb.topology, nonbondedMethod=LJPME, nonbondedCutoff=8*angstrom, constraints=HBonds, defaultTholeWidth=8)
-# integrator = VerletIntegrator(1e-10*femtoseconds)
-# simulation = Simulation(pdb.topology, system, integrator)
-# context = simulation.context
-# context.setPositions(positions*angstrom)
-# state = context.getState(getEnergy=True, getPositions=True)
-# Etot = state.getPotentialEnergy().value_in_unit(kilojoules_per_mole)
-
+pairs = pairs[pairs[:, 0]<pairs[:, 1]]
+nbonds = covalent_map[pairs[:, 0], pairs[:, 1]]
+mscales = mScales[nbonds - 1]
+Q_extendi = Qglobal[pairs[:, 0]]
+Q_extendj = Qglobal[pairs[:, 1]]
+qiQI = rot_global2local(Q_extendi, Ri, 2)
+qiQJ = rot_global2local(Q_extendj, Ri, 2)
+distance = np.linalg.norm(dR[mask], axis=1)

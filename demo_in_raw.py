@@ -57,15 +57,3 @@ def calc_energy(positions, box, Q_local, lmax, polarizabilities, rc, kappa, cova
     
 energy = calc_energy(positions, box, Q_local, lmax, polarizabilities, rc, kappa, covalent_map, mScales, pScales, dScales)
 print('total_energy: ', energy)
-
-
-# --- bench mark --- # 
-pdb = PDBFile(pdb)
-forcefield = ForceField(xml)
-system = forcefield.createSystem(pdb.topology, nonbondedMethod=LJPME, nonbondedCutoff=8*angstrom, constraints=HBonds, defaultTholeWidth=8)
-integrator = VerletIntegrator(1e-10*femtoseconds)
-simulation = Simulation(pdb.topology, system, integrator)
-context = simulation.context
-context.setPositions(positions*angstrom)
-state = context.getState(getEnergy=True, getPositions=True)
-Etot = state.getPotentialEnergy().value_in_unit(kilojoules_per_mole)

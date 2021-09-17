@@ -1,9 +1,9 @@
 from python.neiV3 import construct_nblist
-from jax.lax import fori_loop
 import numpy as np
 import jax.numpy as jnp
 from jax.scipy.special import erf
 from jax.config import config
+from jax.api import jit
 config.update("jax_enable_x64", True)
 
 
@@ -65,7 +65,7 @@ def generate_construct_localframes(axis_types, axis_indices):
         '''
         normalised = matrix / jnp.linalg.norm(matrix, axis=axis, keepdims=True, ord=ord)
         return normalised
-    
+
     def c_l_f(positions, box):
         '''
         This function constructs the local frames for each site
@@ -242,10 +242,8 @@ def calc_ePermCoef(mscales, kappa, dr):
     prefactor = dielectric
     
     rInvVec = jnp.array([prefactor/dr**i for i in range(0, 9)])
-    assert (rInvVec[1] == prefactor / dr).all()
     
     alphaRVec = jnp.array([(kappa*dr)**i for i in range(0, 10)])
-    assert (alphaRVec[1] == kappa * dr).all()
     
     X = 2 * jnp.exp( -alphaRVec[2] ) / jnp.sqrt(np.pi)
     tmp = jnp.array(alphaRVec[1])
@@ -331,7 +329,6 @@ def pme_real(positions, box, rc, Qlocal, construct_localframes, kappa, covalent_
     # any confusion please email lijichen365@126.com directly 
     
     nbs_obj = construct_nblist(positions, box, rc)
-    
     local_frames = construct_localframes(positions, box)
     
     Qglobal = rot_local2global(Qlocal, local_frames, 2)
