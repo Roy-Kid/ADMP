@@ -89,7 +89,7 @@ def _calc_ePermCoef(mscales, kappa, dr):
 
 def _pme_real(dr, qiQI, qiQJ, kappa, mscales):
 
-
+    
     cc, cd, dd_m0, dd_m1, cq, dq_m0, dq_m1, qq_m0, qq_m1, qq_m2 = _calc_ePermCoef(mscales, kappa, dr)
     
 
@@ -204,12 +204,15 @@ def pme_real(positions, Qlocal, box, kappa, mScales, axis_type, axis_indices):
 # --- end build pair stack in numpy ---
 
 # --- build quasi internal in numpy ---
+
     r1 = positions[pairs[:, 0]]
     r2 = positions[pairs[:, 1]]
+
     d = vmap(displacement_fn)
     dr = d(r1, r2)
     norm_dr = jnp.linalg.norm(dr, axis=1)
     vectorZ = dr/norm_dr.reshape((-1, 1))
+
     vectorX = jnp.where(jnp.logical_or(r1[:, 1] != r2[:, 1], r1[:, 2]!=r2[:, 2]).reshape((-1, 1)), vectorZ+jnp.array([1., 0., 0.]), vectorZ + jnp.array([0., 1., 0.]))
     dot = vectorZ * vectorX
     vectorX -= vectorZ * dot
@@ -230,7 +233,7 @@ def pme_real(positions, Qlocal, box, kappa, mScales, axis_type, axis_indices):
 # --- end build coresponding Q matrix ---
 
 # --- actual calculation and jit ---
-    return _jitted_pme_real(norm_dr, qiQJ, qiQI, kappa, mscales)
+    return _pme_real(norm_dr, qiQJ, qiQI, kappa, mscales)
 
     
 if __name__ == '__main__':
@@ -259,7 +262,7 @@ if __name__ == '__main__':
 
     box = np.eye(3)*np.array([lx, ly, lz])
 
-    rc = 8 # in Angstrom
+    rc = 4 # in Angstrom
     ethresh = 1e-4
 
     natoms = len(serials)
