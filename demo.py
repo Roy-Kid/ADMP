@@ -437,23 +437,23 @@ print(f'jit cost: {t1-t0}')
 
 def pme_real(positions, Qlocal, box, kappa, mScales):
 
-# --- build neighborlist ---
+    # --- build neighborlist ---
     t = time.time()
     neighbor = neighbor_list_fn(positions)
     tt = time.time()
     print(f'summary: (sec)')
     print(f'neighbor list : {tt-t}')
-# --- end build neighborlist ---
+    # --- end build neighborlist ---
 
-# --- convert Qlocal to Qglobal ---
+    # --- convert Qlocal to Qglobal ---
 
     local_frames = jitted_construct_localframes(positions, box)
     Qglobal = jitted_rot_local2global(Qlocal, local_frames, 2)
     ttt = time.time()
     print(f'Qlocal to Qglobal: {ttt-tt}')
-# --- end convert Qlocal to Qglobal ---
+    # --- end convert Qlocal to Qglobal ---
 
-# --- build pair stack in numpy ---
+    # --- build pair stack in numpy ---
     t0 = time.time()
     neighboridx = np.asarray(jax.device_get(neighbor.idx))
     mask = neighboridx != positions.shape[0]
@@ -464,9 +464,9 @@ def pme_real(positions, Qlocal, box, kappa, mScales):
     pairs = pairs[pairs[:, 0]<pairs[:, 1]]
     t1 = time.time()
     print(f'pair stack cost: {t1-t0}')
-# --- end build pair stack in numpy ---
+    # --- end build pair stack in numpy ---
 
-# --- build quasi internal in numpy ---
+    # --- build quasi internal in numpy ---
 
     r1 = positions[pairs[:, 0]]
     r2 = positions[pairs[:, 1]]
@@ -484,9 +484,9 @@ def pme_real(positions, Qlocal, box, kappa, mScales):
     Ri = jnp.stack([vectorX, vectorY, vectorZ], axis=1)
     t2 = time.time()
     print(f'quasi internal cost: {t2 - t1}')
-# --- end build quasi internal in numpy ---
+    # --- end build quasi internal in numpy ---
 
-# --- build coresponding Q matrix ---
+    # --- build coresponding Q matrix ---
     Q_extendi = Qglobal[pairs[:, 0]]
     Q_extendj = Qglobal[pairs[:, 1]]
 
@@ -497,9 +497,9 @@ def pme_real(positions, Qlocal, box, kappa, mScales):
     mscales = mScales[nbonds-1]
     t3 = time.time()
     print(f'build qiQI/qiQJ matrix: {t3-t2}')
-# --- end build coresponding Q matrix ---
+    # --- end build coresponding Q matrix ---
 
-# --- actual calculation and jit ---
+    # --- actual calculation and jit ---
     e = _jitted_pme_real(norm_dr, qiQJ, qiQI, kappa, mscales)
     t4 = time.time()
     print(f'actual calculation cost: {t4 -t3}')
@@ -508,10 +508,10 @@ def pme_real(positions, Qlocal, box, kappa, mScales):
 
     
 if __name__ == '__main__':
-# --- prepare data ---
+    # --- prepare data ---
 
     pdb = 'tests/samples/waterdimer_aligned.pdb'
-    pdb = 'tests/samples/waterbox_31ang.pdb'
+    # pdb = 'tests/samples/waterbox_31ang.pdb'
     xml = 'tests/samples/mpidwater.xml'
 
     # return a dict with raw data from pdb
@@ -599,5 +599,18 @@ if __name__ == '__main__':
         e = pme_real(positions, Qlocal, box, kappa, mScales)
         positions = positions + jnp.array([0.0001, 0.0001, 0.0001])
         f = pme_force(positions, Qlocal, box, kappa, mScales)
-    # print(e, f)
+    print(e)
+    print(f)
     # jax.profiler.stop_trace()
+
+    # finite differences
+    findiff = np.empty((6, 3))
+    eps = 1e-4
+    delta = np.zeros((6,3)) 
+    for i in range(6): 
+      for j in range(3): 
+        delta[i][j] = eps 
+        findiff[i][j] = (pme_real(positions+delta/2, Qlocal, box, kappa, mScales) - pme_real(positions-delta/2, Qlocal, box, kappa, mScales))/eps
+        delta[i][j] = 0
+    print('partial diff')
+    print(findiff)
