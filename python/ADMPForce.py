@@ -4,23 +4,15 @@
 import numpy as np
 import re
 from scipy.sparse import csr_matrix
-import simtk.openmm.app.element as elem
 from simtk.openmm.app import *
 from simtk.openmm import *
 from simtk.unit import *
 from .neighborList import construct_nblist
 from .utils import *
-from .pme import pme_real, pme_reciprocal, pme_self
+from .pme import pme_real, pme_self, gen_pme_reciprocal
 import mpidplugin
 
-# see the python/mpidplugin.i code 
-ZThenX = 0
-Bisector = 1
-ZBisect = 2
-ThreeFold = 3
-Zonly = 4
-NoAxisType = 5
-LastAxisTypeIndex = 6
+from jax import value_and_grad, jit
 
 # ----- pre-process section ----- #
 def setup_ewald_parameters(rc, ethresh, box):
@@ -83,6 +75,7 @@ def get_mtpls_global(positions, box, params, lmax=2):
     z_atoms = params['axis_indices'][:, 0]
     x_atoms = params['axis_indices'][:, 1]
     y_atoms = params['axis_indices'][:, 2]
+
     vec_z = positions[z_atoms] - positions
     vec_z = pbc_shift(vec_z, box, box_inv)
     vec_z = normalize(vec_z, axis=1)
@@ -173,7 +166,7 @@ def read_mpid_inputs(pdb, xml):
     system = forcefield.createSystem(pdb.topology, nonbondedMethod=LJPME, defaultTholeWidth=5)
 
     generators = {}
-    print([i.__repr__() for i in forcefield.getGenerators()])
+    # print([i.__repr__() for i in forcefield.getGenerators()])
     for force_gen in forcefield.getGenerators():
         generator_name = re.search('.([A-Za-z]+) +object', force_gen.__repr__()).group(1)
         generators[generator_name] = force_gen
@@ -213,6 +206,13 @@ def read_mpid_inputs(pdb, xml):
     params['dipoles'] = np.array(dipoles) * 10 # now in Angstrom
     params['quadrupoles'] = np.array(quadrupoles) * 3 * 100
     params['octupoles'] = np.array(octupoles) * 15 * 1000
+    
+    multipoles_lc = np.concatenate(
+        (params['charges'][:, np.newaxis], params['dipoles'], params['quadrupoles']), 
+        axis=1
+    )
+    params['multipoles_lh'] = convert_cart2harm(multipoles_lc, lmax=2)
+    
     params['axis_types'] = np.array(axis_types)
     params['axis_indices'] = np.array(axis_indices)
     params['tholes'] = np.array(tholes)
@@ -233,81 +233,5 @@ def read_mpid_inputs(pdb, xml):
         list_elems.append(a.element)
 
     return positions, box, list_elems, params
-
+    
 # --- end pre-process section --- #
-
-class ADMPGenerator:
-
-    def __init__(self, pdb, xml, rc, ethresh, mScales, pScales, dScales, **kwargs) -> None:
-        self.positions, self.box, self.list_elem, self.mpid_params = read_mpid_inputs(pdb, xml)
-        
-        self.rc = rc
-        self.ethresh = ethresh
-        self.mScales = mScales
-        self.pScales = pScales
-        self.dScales = dScales
-        
-
-    def create_force(self):
-        
-        force = ADMPForce()
-        force.positions = self.positions
-        force.box = self.box
-        force.box_inv = np.linalg.inv(self.box)
-        force.rc = self.rc
-        force.mpid_params = self.mpid_params
-        force.ethresh = self.ethresh
-        force.mScales = self.mScales
-        force.pScales = self.pScales
-        force.dScales = self.dScales
-        force.box = self.box
-        force.lmax = 2
-        return force
-
-
-class ADMPBaseForce:
-    
-    def __init__(self) -> None:
-        pass
-    
-    def contruct_neighborlist(self):
-        self.neighlist = construct_nblist(self.positions, self.box, self.rc)
-
-    def setup_ewald_parameters(self):
-        self.kappa, self.K1, self.K2, self.K3 = setup_ewald_parameters(self.rc, self.ethresh, self.box)
-        
-    def get_mtpls_global(self):
-        self.Q, self.local_frames = get_mtpls_global(box = self.box, positions = self.positions, params=self.mpid_params, lmax=self.lmax)
-
-
-    def update(self, positions=None, box=None, ):
-        """
-            This method is used to update parameters, such as positions, box etc.
-            And calculate related parameters.
-        """
-        positions = positions or self.positions
-        box = box or self.box
-        rc = self.rc
-        
-        self.contruct_neighborlist()
-        
-        self.setup_ewald_parameters()
-        
-        self.get_mtpls_global()
-
-
-class ADMPForce(ADMPBaseForce):
-    
-    def __init__(self) -> None:
-        super().__init__()
-    
-    def calc_real_space_energy(self):
-        return pme_real(self.positions, self.box, self.Q, self.lmax, self.box_inv, self.mpid_params['polarizabilities'], self.rc, self.kappa, self.mpid_params['covalent_map'], self.mScales, self.pScales, self.dScales, self.neighlist)
-    
-    def calc_self_energy(self):
-        return pme_self(self.Q, self.lmax, self.kappa)
-    
-    def calc_reci_space_energy(self):
-        N = np.array([self.K1, self.K2, self.K3])
-        Q = self.Q[:, :(self.lmax+1)**2].reshape(self.Q.shape[0], (self.lmax+1)**2)
-        return pme_reciprocal(self.positions, self.box, Q, self.lmax, self.kappa, N)
