@@ -1,14 +1,16 @@
-from jax import value_and_grad, vmap, jit, grad
-from jax_md import partition
-from jax_md import space
-from jax.scipy.special import erf
-from python.parser import assemble_covalent, init_residues, read_pdb, read_xml
+import sys
+import time
+
 import jax
 import jax.numpy as jnp
 import numpy as np
-import time 
-import sys
+from jax import grad, jit, value_and_grad, vmap
 from jax.config import config
+from jax.scipy.special import erf
+from jax_md import partition, space
+
+from python.parser import assemble_covalent, init_residues, read_pdb, read_xml
+
 config.update("jax_enable_x64", True)
 
 def setup_ewald_parameters(rc, ethresh, box):
@@ -870,17 +872,36 @@ def gen_pme_reciprocal(axis_type, axis_indices):
         return pme_reciprocal_on_Qgh(positions, box, Q_gh, kappa, lmax, K1, K2, K3)
     return pme_reciprocal
 
+def calc_distance(r1, r2):
+    d = vmap(displacement_fn)
+    dr = d(r1, r2)
+    norm_dr = jnp.linalg.norm(dr, axis=1)
+    return dr, norm_dr
+
+def build_quasi_internal(r1, r2, dr, norm_dr):
+
+    vectorZ = dr/norm_dr.reshape((-1, 1))
+
+    vectorX = jnp.where(jnp.logical_or(r1[:, 1] != r2[:, 1], r1[:, 2]!=r2[:, 2]).reshape((-1, 1)), vectorZ+jnp.array([1., 0., 0.]), vectorZ + jnp.array([0., 1., 0.]))
+    dot = vectorZ * vectorX
+    vectorX -= vectorZ * dot
+    vectorX = vectorX / jnp.linalg.norm(vectorX, axis=1).reshape((-1, 1))
+    vectorY = jnp.cross(vectorZ, vectorX)
+    return jnp.stack([vectorX, vectorY, vectorZ], axis=1)
+
 t0 = time.time()
 
 jitted_rot_local2global = jit(rot_local2global, static_argnums=2)
 jitted_rot_global2local = jit(rot_global2local, static_argnums=2)
-_jitted_pme_real_energy_and_force = jit(value_and_grad(_pme_real, argnums=0))
+jitted_pme_real_energy_and_force = jit(value_and_grad(_pme_real, argnums=0))
 jitted_pme_self_energy_and_force = jit(value_and_grad(pme_self), static_argnums=2)
+jitted_build_quasi_internal = jit(build_quasi_internal)
+jitted_calc_distance = jit(calc_distance)
 
 t1 = time.time()
 print(f'jit cost: {t1-t0}')
 
-def pme_real(positions, Qlocal, box, kappa, mScales):
+def real_space(positions, Qlocal, box, kappa, mScales):
 
     # --- build neighborlist ---
     t = time.time()
@@ -912,21 +933,11 @@ def pme_real(positions, Qlocal, box, kappa, mScales):
     # --- end build pair stack in numpy ---
 
     # --- build quasi internal in numpy ---
-
     r1 = positions[pairs[:, 0]]
     r2 = positions[pairs[:, 1]]
+    dr, norm_dr = jitted_calc_distance(r1, r2)
+    Ri = jitted_build_quasi_internal(r1, r2, dr, norm_dr)
 
-    d = vmap(displacement_fn)
-    dr = d(r1, r2)
-    norm_dr = jnp.linalg.norm(dr, axis=1)
-    vectorZ = dr/norm_dr.reshape((-1, 1))
-
-    vectorX = jnp.where(jnp.logical_or(r1[:, 1] != r2[:, 1], r1[:, 2]!=r2[:, 2]).reshape((-1, 1)), vectorZ+jnp.array([1., 0., 0.]), vectorZ + jnp.array([0., 1., 0.]))
-    dot = vectorZ * vectorX
-    vectorX -= vectorZ * dot
-    vectorX = vectorX / jnp.linalg.norm(vectorX, axis=1).reshape((-1, 1))
-    vectorY = jnp.cross(vectorZ, vectorX)
-    Ri = jnp.stack([vectorX, vectorY, vectorZ], axis=1)
     t2 = time.time()
     print(f'quasi internal cost: {t2 - t1}')
     # --- end build quasi internal in numpy ---
@@ -945,7 +956,7 @@ def pme_real(positions, Qlocal, box, kappa, mScales):
     # --- end build coresponding Q matrix ---
 
     # --- actual calculation and jit ---
-    e, f = _jitted_pme_real_energy_and_force(norm_dr, qiQJ, qiQI, kappa, mscales)
+    e, f = jitted_pme_real_energy_and_force(norm_dr, qiQJ, qiQI, kappa, mscales)
     t4 = time.time()
     print(f'real cost: {t4 -t3}')
     return e, f
@@ -955,7 +966,7 @@ if __name__ == '__main__':
     # --- prepare data ---
 
     pdb = 'tests/samples/waterdimer_aligned.pdb'
-    # pdb = 'tests/samples/waterbox_31ang.pdb'
+    pdb = 'tests/samples/waterbox_31ang.pdb'
     xml = 'tests/samples/mpidwater.xml'
 
     # return a dict with raw data from pdb
@@ -1044,7 +1055,7 @@ if __name__ == '__main__':
     for i in range(nepoch):
         print(f'iter {i}')
         start = time.time()
-        ereal, freal = pme_real(positions, Qlocal, box, kappa, mScales)
+        ereal, freal = real_space(positions, Qlocal, box, kappa, mScales)
         positions = positions + jnp.array([0.0001, 0.0001, 0.0001])
         start_self = time.time()
         eself, fself = jitted_pme_self_energy_and_force(Qlocal, kappa)

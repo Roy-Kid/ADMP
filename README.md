@@ -17,12 +17,12 @@ processor: i7-6600U
 
 | processes  | cost(sec)  | percentage(%) |
 |---------|---------|---------|
-|neighbor list     |    0.3277     |     |
-|Qlocal to Qglobal     |    0.0032     |         |
-|pair stack     |         |         |
-|quasi internal     |         |         |
-|build qiQI/qiQJ     |         |         |
-|real     |         |         |
-|self     |         |         |
-|reciprocal |         |         |
-|total     |         |         |
+|neighbor list     |    0.3277     |  21.0  |
+|Qlocal to Qglobal     |    0.0032     |   0.2      |
+|pair stack     |    0.01176      |    1.8    |
+|quasi internal     |    0.0289     |   1.5      |
+|build qiQI/qiQJ     |    0.0243 |         |
+|real     |    0.0369     | 2.4 | 
+|self     |    0.0001     | 0 |
+|reciprocal |   1.1428 | 72.9 |
+|total     |  1.5639    | |
