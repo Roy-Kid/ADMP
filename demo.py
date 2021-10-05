@@ -1,4 +1,4 @@
-from jax import vmap, jit, grad
+from jax import value_and_grad, vmap, jit, grad
 from jax_md import partition
 from jax_md import space
 from jax.scipy.special import erf
@@ -10,6 +10,36 @@ import time
 import sys
 from jax.config import config
 config.update("jax_enable_x64", True)
+
+def setup_ewald_parameters(rc, ethresh, box):
+    '''
+    Given the cutoff distance, and the required precision, determine the parameters used in
+    Ewald sum, including: kappa, K1, K2, and K3.
+    The algorithm is exactly the same as OpenMM, see: 
+    http://docs.openmm.org/latest/userguide/theory.html
+
+    Input:
+        rc:
+            float, the cutoff distance
+        ethresh:
+            float, required energy precision
+        box:
+            3*3 matrix, box size, a, b, c arranged in rows
+
+    Output:
+        kappa:
+            float, the attenuation factor
+        K1, K2, K3:
+            integers, sizes of the k-points mesh
+    '''
+    kappa = np.sqrt(-np.log(2*ethresh))/rc
+    K1 = np.ceil(2 * kappa * box[0, 0] / 3 / ethresh**0.2)
+    K2 = np.ceil(2 * kappa * box[1, 1] / 3 / ethresh**0.2)
+    K3 = np.ceil(2 * kappa * box[2, 2] / 3 / ethresh**0.2)
+
+    return kappa, int(K1), int(K2), int(K3)
+
+
 def convert_cart2harm(Theta, lmax):
     '''
     Convert the multipole moments in cartesian repr to spherical harmonic repr
@@ -426,11 +456,426 @@ def _pme_real(dr, qiQI, qiQJ, kappa, mscales):
     
     return 0.5*(jnp.sum(qiQI*Vij.T)+jnp.sum(qiQJ*Vji.T))
 
+def pme_self(Q_h, kappa, lmax = 2):
+    '''
+    This function calculates the PME self energy
+
+    Inputs:
+        Q:
+            N * (lmax+1)^2: harmonic multipoles, local or global does not matter
+        kappa:
+            float: kappa used in PME
+
+    Output:
+        ene_self:
+            float: the self energy
+    '''
+    n_harms = (lmax + 1) ** 2    
+    l_list = np.array([0]+[1,]*3+[2,]*5)[:n_harms]
+    l_fac2 = np.array([1]+[3,]*3+[15,]*5)[:n_harms]
+    factor = kappa/np.sqrt(np.pi) * (2*kappa**2)**l_list / l_fac2
+    return - jnp.sum(factor[np.newaxis] * Q_h**2) * dielectric
+
+def gen_pme_reciprocal(axis_type, axis_indices):
+    construct_localframes = generate_construct_localframes(axis_type, axis_indices)
+    def pme_reciprocal_on_Qgh(positions, box, Q, kappa, lmax, K1, K2, K3):
+        '''
+        This function calculates the PME reciprocal space energy
+
+        Inputs:
+            positions:
+                N_a x 3 atomic positions
+            box:
+                3 x 3 box vectors in angstrom
+            Q:
+                N_a x (lmax + 1)**2 multipole values in global frame
+            kappa:
+                characteristic reciprocal length scale
+            lmax:
+                maximum value of the multipole level
+            K1, K2, K3:
+                int: the dimensions of the mesh grid
+
+        Output:
+            ene_reciprocal:
+                float: the reciprocal space energy
+        '''
+        N = np.array([K1,K2,K3])
+        ################
+        bspline_range = jnp.arange(-3, 3)
+        shifts = jnp.array(jnp.meshgrid(bspline_range, bspline_range, bspline_range)).T.reshape((1, 216, 3))
+        
+        def get_recip_vectors(N, box):
+            """
+            Computes reciprocal lattice vectors of the grid
+            
+            Input:
+                N:
+                    (3,)-shaped array
+                box:
+                    3 x 3 matrix, box parallelepiped vectors arranged in TODO rows or columns?
+                    
+            Output: 
+                Nj_Aji_star:
+                    3 x 3 matrix, the first index denotes reciprocal lattice vector, the second index is the component xyz.
+                    (lattice vectors arranged in rows)
+            """
+            Nj_Aji_star = (N.reshape((1, 3)) * jnp.linalg.inv(box)).T
+            return Nj_Aji_star
+
+        def u_reference(R_a, Nj_Aji_star):
+            """
+            Each atom is meshed to PME_ORDER**3 points on the m-meshgrid. This function computes the xyz-index of the reference point, which is the point on the meshgrid just above atomic coordinates, and the corresponding values of xyz fractional displacements from real coordinate to the reference point. 
+            
+            Inputs:
+                R_a:
+                    N_a * 3 matrix containing positions of sites
+                Nj_Aji_star:
+                    3 x 3 matrix, the first index denotes reciprocal lattice vector, the second index is the component xyz.
+                    (lattice vectors arranged in rows)
+                    
+            Outputs:
+                m_u0: 
+                    N_a * 3 matrix, positions of the reference points of R_a on the m-meshgrid
+                u0: 
+                    N_a * 3 matrix, (R_a - R_m)*a_star values
+            """
+            
+            R_in_m_basis =  jnp.einsum("ij,kj->ki", Nj_Aji_star, R_a)
+            
+            m_u0 = jnp.ceil(R_in_m_basis).astype(int)
+            
+            u0 = (m_u0 - R_in_m_basis) + 6/2
+            return m_u0, u0
+
+        def bspline6(u):
+            """
+            Computes the cardinal B-spline function
+            """
+            return jnp.piecewise(u, 
+                                [jnp.logical_and(u>=0, u<1.), 
+                                jnp.logical_and(u>=1, u<2.), 
+                                jnp.logical_and(u>=2, u<3.), 
+                                jnp.logical_and(u>=3, u<4.), 
+                                jnp.logical_and(u>=4, u<5.), 
+                                jnp.logical_and(u>=5, u<6.)],
+                                [lambda u: u**5/120,
+                                lambda u: u**5/120 - (u - 1)**5/20,
+                                lambda u: u**5/120 + (u - 2)**5/8 - (u - 1)**5/20,
+                                lambda u: u**5/120 - (u - 3)**5/6 + (u - 2)**5/8 - (u - 1)**5/20,
+                                lambda u: u**5/24 - u**4 + 19*u**3/2 - 89*u**2/2 + 409*u/4 - 1829/20,
+                                lambda u: -u**5/120 + u**4/4 - 3*u**3 + 18*u**2 - 54*u + 324/5] )
+
+        def bspline6prime(u):
+            """
+            Computes first derivative of the cardinal B-spline function
+            """
+            return jnp.piecewise(u, 
+                                [jnp.logical_and(u>=0., u<1.), 
+                                jnp.logical_and(u>=1., u<2.), 
+                                jnp.logical_and(u>=2., u<3.), 
+                                jnp.logical_and(u>=3., u<4.), 
+                                jnp.logical_and(u>=4., u<5.), 
+                                jnp.logical_and(u>=5., u<6.)],
+                                [lambda u: u**4/24,
+                                lambda u: u**4/24 - (u - 1)**4/4,
+                                lambda u: u**4/24 + 5*(u - 2)**4/8 - (u - 1)**4/4,
+                                lambda u: -5*u**4/12 + 6*u**3 - 63*u**2/2 + 71*u - 231/4,
+                                lambda u: 5*u**4/24 - 4*u**3 + 57*u**2/2 - 89*u + 409/4,
+                                lambda u: -u**4/24 + u**3 - 9*u**2 + 36*u - 54] )
+
+        def bspline6prime2(u):
+            """
+            Computes second derivate of the cardinal B-spline function
+            """
+            return jnp.piecewise(u, 
+                                [jnp.logical_and(u>=0., u<1.), 
+                                jnp.logical_and(u>=1., u<2.), 
+                                jnp.logical_and(u>=2., u<3.), 
+                                jnp.logical_and(u>=3., u<4.), 
+                                jnp.logical_and(u>=4., u<5.), 
+                                jnp.logical_and(u>=5., u<6.)],
+                                [lambda u: u**3/6,
+                                lambda u: u**3/6 - (u - 1)**3,
+                                lambda u: 5*u**3/3 - 12*u**2 + 27*u - 19,
+                                lambda u: -5*u**3/3 + 18*u**2 - 63*u + 71,
+                                lambda u: 5*u**3/6 - 12*u**2 + 57*u - 89,
+                                lambda u: -u**3/6 + 3*u**2 - 18*u + 36,] )
+
+
+        def theta_eval(u, M_u):
+            """
+            Evaluates the value of theta given 3D u values at ... points 
+            
+            Input:
+                u:
+                    ... x 3 matrix
+
+            Output:
+                theta:
+                    ... matrix
+            """
+            theta = jnp.prod(M_u, axis = -1)
+            return theta
+
+        def thetaprime_eval(u, Nj_Aji_star, M_u, Mprime_u):
+            """
+            First derivative of theta with respect to x,y,z directions
+            
+            Input:
+                u
+                Nj_Aji_star:
+                    reciprocal lattice vectors
+            
+            Output:
+                N_a * 3 matrix
+            """
+
+            div = jnp.array([
+                Mprime_u[:, 0] * M_u[:, 1] * M_u[:, 2],
+                Mprime_u[:, 1] * M_u[:, 2] * M_u[:, 0],
+                Mprime_u[:, 2] * M_u[:, 0] * M_u[:, 1],
+            ]).T
+            
+            # Notice that u = m_u0 - R_in_m_basis + 6/2
+            # therefore the Jacobian du_j/dx_i = - Nj_Aji_star
+            return jnp.einsum("ij,kj->ki", -Nj_Aji_star, div)
+
+        def theta2prime_eval(u, Nj_Aji_star, M_u, Mprime_u, M2prime_u):
+            """
+            compute the 3 x 3 second derivatives of theta with respect to xyz
+            
+            Input:
+                u
+                Nj_Aji_star
+            
+            Output:
+                N_A * 3 * 3
+            """
+
+            div_00 = M2prime_u[:, 0] * M_u[:, 1] * M_u[:, 2]
+            div_11 = M2prime_u[:, 1] * M_u[:, 0] * M_u[:, 2]
+            div_22 = M2prime_u[:, 2] * M_u[:, 0] * M_u[:, 1]
+            
+            div_01 = Mprime_u[:, 0] * Mprime_u[:, 1] * M_u[:, 2]
+            div_02 = Mprime_u[:, 0] * Mprime_u[:, 2] * M_u[:, 1]
+            div_12 = Mprime_u[:, 1] * Mprime_u[:, 2] * M_u[:, 0]
+
+            div_10 = div_01
+            div_20 = div_02
+            div_21 = div_12
+            
+            div = jnp.array([
+                [div_00, div_01, div_02],
+                [div_10, div_11, div_12],
+                [div_20, div_21, div_22],
+            ]).swapaxes(0, 2)
+            
+            # Notice that u = m_u0 - R_in_m_basis + 6/2
+            # therefore the Jacobian du_j/dx_i = - Nj_Aji_star
+            return jnp.einsum("im,jn,kmn->kij", -Nj_Aji_star, -Nj_Aji_star, div)
+
+        def sph_harmonics_GO(u0, Nj_Aji_star):
+            '''
+            Find out the value of spherical harmonics GRADIENT OPERATORS, assume the order is:
+            00, 10, 11c, 11s, 20, 21c, 21s, 22c, 22s, ...
+            Currently supports lmax <= 2
+
+            Inputs:
+                u0: 
+                    a N_a * 3 matrix containing all positions
+                Nj_Aji_star:
+                    reciprocal lattice vectors in the m-grid
+
+            Output: 
+                harmonics: 
+                    a Na * (6**3) * (l+1)^2 matrix, STGO operated on theta,
+                    evaluated at 6*6*6 integer points about reference points m_u0 
+            '''
+            
+            n_harm = (lmax + 1)**2
+
+            N_a = u0.shape[0]
+            u = (u0[:, jnp.newaxis, :] + shifts).reshape((N_a*216, 3)) 
+
+            M_u = bspline6(u)
+            theta = theta_eval(u, M_u)
+            if lmax == 0:
+                return theta.reshape(N_a, 216, n_harm)
+            
+            # dipole
+            Mprime_u = bspline6prime(u)
+            thetaprime = thetaprime_eval(u, Nj_Aji_star, M_u, Mprime_u)
+            harmonics_1 = jnp.stack(
+                [theta,
+                thetaprime[:, 2],
+                thetaprime[:, 0],
+                thetaprime[:, 1]],
+                axis = -1
+            )
+            
+            if lmax == 1:
+                return harmonics_1.reshape(N_a, 216, n_harm)
+
+            # quadrapole
+            M2prime_u = bspline6prime2(u)
+            theta2prime = theta2prime_eval(u, Nj_Aji_star, M_u, Mprime_u, M2prime_u)
+            rt3 = jnp.sqrt(3)
+            harmonics_2 = jnp.hstack(
+                [harmonics_1,
+                jnp.stack([(3*theta2prime[:,2,2] - jnp.trace(theta2prime, axis1=1, axis2=2)) / 2,
+                rt3 * theta2prime[:, 0, 2],
+                rt3 * theta2prime[:, 1, 2],
+                rt3/2 * (theta2prime[:, 0, 0] - theta2prime[:, 1, 1]),
+                rt3 * theta2prime[:, 0, 1]], axis = 1)]
+            )
+            if lmax == 2:
+                return harmonics_2.reshape(N_a, 216, n_harm)
+            else:
+                raise NotImplementedError('l > 2 (beyond quadrupole) not supported')
+            
+        def Q_m_peratom(Q, sph_harms):
+            """
+            Computes <R_t|Q>. See eq. (49) of https://doi.org/10.1021/ct5007983
+            
+            Inputs:
+                Q: 
+                    N_a * (l+1)**2 matrix containing global frame multipole moments up to lmax,
+                sph_harms:
+                    N_a, 216, (l+1)**2
+            
+            Output:
+                Q_m_pera:
+                    N_a * 216 matrix, values of theta evaluated on a 6 * 6 block about the atoms
+            """
+            
+            N_a = sph_harms.shape[0]
+            
+            if lmax > 2:
+                raise NotImplementedError('l > 2 (beyond quadrupole) not supported')
+
+            Q_dbf = Q[:, 0]
+            if lmax >= 1:
+                Q_dbf = jnp.hstack([Q_dbf[:,jnp.newaxis], Q[:,1:4]])
+            if lmax >= 2:
+                Q_dbf = jnp.hstack([Q_dbf, Q[:,4:9]/3])
+            
+            Q_m_pera = jnp.sum( Q_dbf[:,jnp.newaxis,:]* sph_harms, axis=2)
+
+            assert Q_m_pera.shape == (N_a, 216)
+            return Q_m_pera
+        
+        def Q_mesh_on_m(Q_mesh_pera, m_u0, N):
+            """
+            spreads the particle mesh onto the grid
+            
+            Input:
+                Q_mesh_pera, m_u0, N
+                
+            Output:
+                Q_mesh: 
+                    Nx * Ny * Nz matrix
+            """
+
+
+            indices_arr = jnp.mod(m_u0[:,np.newaxis,:]+shifts, N[np.newaxis, np.newaxis, :])
+            
+            ### jax trick implementation without using for loop
+            ### NOTICE: this implementation does not work with numpy!
+            Q_mesh = jnp.zeros((N[0], N[1], N[2]))
+            Q_mesh = Q_mesh.at[indices_arr[:, :, 0], indices_arr[:, :, 1], indices_arr[:, :, 2]].add(Q_mesh_pera)
+            
+            return Q_mesh
+
+        def setup_kpts_integer(N):
+            """
+            Outputs:
+                kpts_int:
+                    n_k * 3 matrix, n_k = N[0] * N[1] * N[2]
+            """
+            N_half = N.reshape(3)
+
+            kx, ky, kz = [jnp.roll(jnp.arange(- (N_half[i] - 1) // 2, (N_half[i] + 1) // 2 ), - (N_half[i] - 1) // 2) for i in range(3)]
+
+            kpts_int = jnp.hstack([ki.flatten()[:,jnp.newaxis] for ki in jnp.meshgrid(kz, kx, ky)])
+
+            return kpts_int 
+
+        def setup_kpts(box, kpts_int):
+            '''
+            This function sets up the k-points used for reciprocal space calculations
+            
+            Input:
+                box:
+                    3 * 3, three axis arranged in rows
+                kpts_int:
+                    n_k * 3 matrix
+
+            Output:
+                kpts:
+                    4 * K, K=K1*K2*K3, contains kx, ky, kz, k^2 for each kpoint
+            '''
+            # in this array, a*, b*, c* (without 2*pi) are arranged in column
+            box_inv = jnp.linalg.inv(box)
+
+            # K * 3, coordinate in reciprocal space
+            kpts = 2 * jnp.pi * kpts_int.dot(box_inv)
+
+            ksr = jnp.sum(kpts**2, axis=1)
+
+            # 4 * K
+            kpts = jnp.hstack((kpts, ksr[:, jnp.newaxis])).T
+
+            return kpts
+
+        def E_recip_on_grid(Q_mesh, box, N, kappa):
+            """
+            Computes the reciprocal part energy
+            """
+            
+            N = N.reshape(1,1,3)
+            kpts_int = setup_kpts_integer(N)
+            kpts = setup_kpts(box, kpts_int)
+
+            m = jnp.linspace(-2,2,5).reshape(5, 1, 1)
+            # theta_k : array of shape n_k
+            theta_k = jnp.prod(
+                jnp.sum(
+                    bspline6(m + 6/2) * jnp.cos(2*jnp.pi*m*kpts_int[jnp.newaxis] / N),
+                    axis = 0
+                ),
+                axis = 1
+            )
+
+            S_k = jnp.fft.fftn(Q_mesh)
+
+            S_k = S_k.flatten()
+
+            E_k = 2*jnp.pi/kpts[3,1:]/jnp.linalg.det(box) * jnp.exp( - kpts[3, 1:] /4 /kappa**2) * jnp.abs(S_k[1:]/theta_k[1:])**2
+            return jnp.sum(E_k)
+        
+        Nj_Aji_star = get_recip_vectors(N, box)
+        m_u0, u0    = u_reference(positions, Nj_Aji_star)
+        sph_harms   = sph_harmonics_GO(u0, Nj_Aji_star)
+        Q_mesh_pera = Q_m_peratom(Q, sph_harms)
+        Q_mesh      = Q_mesh_on_m(Q_mesh_pera, m_u0, N)
+        E_recip     = E_recip_on_grid(Q_mesh, box, N, kappa)
+        
+        # Outputs energy in OPENMM units
+        return E_recip*dielectric
+
+    def pme_reciprocal(positions, box,  Q_lh, kappa, lmax, K1, K2, K3):
+        localframes = construct_localframes(positions, box)
+        Q_gh = rot_local2global(Q_lh, localframes, lmax)
+        return pme_reciprocal_on_Qgh(positions, box, Q_gh, kappa, lmax, K1, K2, K3)
+    return pme_reciprocal
+
 t0 = time.time()
 
 jitted_rot_local2global = jit(rot_local2global, static_argnums=2)
 jitted_rot_global2local = jit(rot_global2local, static_argnums=2)
-_jitted_pme_real = jit(_pme_real)
+_jitted_pme_real_energy_and_force = jit(value_and_grad(_pme_real, argnums=0))
+jitted_pme_self_energy_and_force = jit(value_and_grad(pme_self), static_argnums=2)
 
 t1 = time.time()
 print(f'jit cost: {t1-t0}')
@@ -500,11 +945,10 @@ def pme_real(positions, Qlocal, box, kappa, mScales):
     # --- end build coresponding Q matrix ---
 
     # --- actual calculation and jit ---
-    e = _jitted_pme_real(norm_dr, qiQJ, qiQI, kappa, mscales)
+    e, f = _jitted_pme_real_energy_and_force(norm_dr, qiQJ, qiQI, kappa, mscales)
     t4 = time.time()
-    print(f'actual calculation cost: {t4 -t3}')
-    print(f'total time cost: {t4-t}')
-    return e
+    print(f'real cost: {t4 -t3}')
+    return e, f
 
     
 if __name__ == '__main__':
@@ -562,11 +1006,13 @@ if __name__ == '__main__':
     axis_indices = np.vstack(
         [atom.axis_indices for atom in atomDicts.values()]
     )
+    jitted_pme_reci_energy_and_force = jit(value_and_grad(gen_pme_reciprocal(axis_type, axis_indices)), static_argnums=(4,5,6,7))
     # covalent_map is simply as N*N matrix now
     # remove sparse matrix
     covalent_map = assemble_covalent(residueDicts, natoms)
 
     ## TODO: setup kappa
+    kappa, K1, K2, K3 = setup_ewald_parameters(rc, ethresh, box)
     kappa = 0.328532611
     dielectric = 1389.35455846 # in e^2/A
 
@@ -593,24 +1039,35 @@ if __name__ == '__main__':
     displacement_fn = jit(displacement_fn)
     # --- end prepare data ---
     # jax.profiler.start_trace("./tensorboard")
-    pme_force = grad(pme_real)
-    for i in range(3):
+    total_time = 0
+    nepoch = 10
+    for i in range(nepoch):
         print(f'iter {i}')
-        e = pme_real(positions, Qlocal, box, kappa, mScales)
+        start = time.time()
+        ereal, freal = pme_real(positions, Qlocal, box, kappa, mScales)
         positions = positions + jnp.array([0.0001, 0.0001, 0.0001])
-        f = pme_force(positions, Qlocal, box, kappa, mScales)
-    print(e)
-    print(f)
+        start_self = time.time()
+        eself, fself = jitted_pme_self_energy_and_force(Qlocal, kappa)
+        end_self = time.time()
+        print(f'self cost: {end_self-start_self}')
+        ereci, freci = jitted_pme_reci_energy_and_force(positions, box, Qlocal, kappa, 2, K1, K2, K3)
+        end_reci = time.time()
+        print(f'reci cost: {end_reci-end_self}')
+        total = end_reci-start
+        print(f'total time cost: {total}')
+        if i != 0:
+            total_time += total
+        print(f'ave time: {total_time/(nepoch-1)}')
     # jax.profiler.stop_trace()
 
     # finite differences
-    findiff = np.empty((6, 3))
-    eps = 1e-4
-    delta = np.zeros((6,3)) 
-    for i in range(6): 
-      for j in range(3): 
-        delta[i][j] = eps 
-        findiff[i][j] = (pme_real(positions+delta/2, Qlocal, box, kappa, mScales) - pme_real(positions-delta/2, Qlocal, box, kappa, mScales))/eps
-        delta[i][j] = 0
-    print('partial diff')
-    print(findiff)
+    # findiff = np.empty((6, 3))
+    # eps = 1e-4
+    # delta = np.zeros((6,3)) 
+    # for i in range(6): 
+    #   for j in range(3): 
+    #     delta[i][j] = eps 
+    #     findiff[i][j] = (pme_real(positions+delta/2, Qlocal, box, kappa, mScales)[1] - pme_real(positions-delta/2, Qlocal, box, kappa, mScales)[1])/eps
+    #     delta[i][j] = 0
+    # print('partial diff')
+    # print(findiff)
