@@ -137,6 +137,7 @@ def get_mtpls_global(positions, box, params, lmax=2):
     local_frames = np.stack((vec_x, vec_y, vec_z), axis=1)
 
     multipoles_lc = np.concatenate((np.expand_dims(params['charges'], axis=1), params['dipoles'], params['quadrupoles']), axis=1)
+    print('cart: ', multipoles_lc)
     multipoles_lh = convert_cart2harm(multipoles_lc, lmax=2)
     Qglobal = rot_local2global(multipoles_lh, local_frames, lmax=2)
     Qlocal = multipoles_lh

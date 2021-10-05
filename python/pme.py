@@ -169,6 +169,7 @@ def pme_real(positions, box, Q, lmax, mu_ind, polarizabilities, rc, kappa, coval
     distances = drdrs**0.5
     assert len(pairs) == len(drs)
     npair = len(pairs)
+    print(pairs, drdrs, drs)
 
     mscales = np.empty((npair, ))
     Ri = np.empty((npair, 3, 3))
