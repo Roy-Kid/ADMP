@@ -102,7 +102,7 @@ def construct_nblist(positions, box, rc):
                 dr_vecs[j, n_nbs[j], :] = -dr[ii]
                 n_nbs[i] += 1
                 n_nbs[j] += 1
-    jax
+
     return nbs, n_nbs, distances2, dr_vecs
 
 def setup_ewald_parameters(rc, ethresh, box):
@@ -979,7 +979,6 @@ def build_quasi_internal(r1, r2, dr, norm_dr):
     vectorX = vectorX / jnp.linalg.norm(vectorX, axis=1).reshape((-1, 1))
     vectorY = jnp.cross(vectorZ, vectorX)
     return jnp.stack([vectorX, vectorY, vectorZ], axis=1)
-
 
 def dispersion_self(C_list, kappa):
     '''
