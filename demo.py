@@ -3,6 +3,7 @@ import time
 from math import factorial
 
 import jax
+from jax._src.numpy.lax_numpy import reciprocal
 import jax.numpy as jnp
 import jax.scipy as jsp
 import numpy as np
@@ -11,7 +12,7 @@ from jax._src.numpy.lax_numpy import reciprocal
 from jax.config import config
 from jax.scipy.special import erf
 from jax_md import partition, space
-
+import json
 from python.parser import assemble_covalent, init_residues, read_pdb, read_xml
 
 config.update("jax_enable_x64", True)
@@ -1252,6 +1253,11 @@ jitted_calc_distance = jit(calc_distance)
 def real_space(positions, Qlocal, box, kappa):
 
     # --- build neighborlist ---
+<<<<<<< Updated upstream
+=======
+
+    neighbor = neighbor_list_fn(positions)
+>>>>>>> Stashed changes
 
     # nbs, n_nbs, distances, dr_vec = construct_nblist(positions, box, rc)
     neighbor = neighbor_list_fn(positions)
@@ -1306,7 +1312,19 @@ def real_space(positions, Qlocal, box, kappa):
 # jitted_pme_real_energy_and_force = value_and_grad(real_space, argnums=0)
 
 if __name__ == '__main__':
+<<<<<<< Updated upstream
 
+=======
+    # n = [256, 512, 1024, 2048, 4096]
+    nH2O = 256
+    res = {}
+
+    res[nH2O] = {}
+    res[nH2O]['total'] = []
+    res[nH2O]['real'] = []
+    res[nH2O]['self'] = []
+    res[nH2O]['reci'] = []
+>>>>>>> Stashed changes
     # --- prepare data ---
 
     # pdb = 'tests/samples/waterdimer_aligned.pdb'
@@ -1386,13 +1404,26 @@ if __name__ == '__main__':
     
     # --- start calc pme ---
     total_time = 0
+<<<<<<< Updated upstream
 
     ereal = real_space(positions, Qlocal, box, kappa)
 
+=======
+    nepoch = 1
+    tot_real = 0
+    tot_self = 0
+    tot_reci = 0
+
+
+    ereal = real_space(positions, Qlocal, box, kappa)
+    print(ereal)
+    # positions = positions + jnp.array([0.0001, 0.0001, 0.0001])
+>>>>>>> Stashed changes
     eself, fself = jitted_pme_self_energy_and_force(Qlocal, kappa)
 
     ereci, freci = jitted_pme_reci_energy_and_force(positions, box, Qlocal, kappa, 2, K1, K2, K3)
 
+<<<<<<< Updated upstream
     # --- end calc pme ---
     
     # --- start calc dispersion ---
@@ -1405,6 +1436,8 @@ if __name__ == '__main__':
     
     # --- end calc dispersion ---
 
+=======
+>>>>>>> Stashed changes
     # jax.profiler.stop_trace()
 
     # finite differences
