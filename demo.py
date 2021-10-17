@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import sys
 import time
 
@@ -9,7 +10,7 @@ from jax.config import config
 from jax.scipy.special import erf
 from jax_md import partition, space
 
-from python.parser import assemble_covalent, init_residues, read_pdb, read_xml
+#from python.parser import assemble_covalent, init_residues, read_pdb, read_xml
 
 config.update("jax_enable_x64", True)
 
@@ -966,7 +967,7 @@ if __name__ == '__main__':
     # --- prepare data ---
 
     pdb = 'tests/samples/waterdimer_aligned.pdb'
-    pdb = 'tests/samples/waterbox_31ang.pdb'
+    #pdb = 'tests/samples/waterbox_31ang.pdb'
     xml = 'tests/samples/mpidwater.xml'
 
     # return a dict with raw data from pdb
