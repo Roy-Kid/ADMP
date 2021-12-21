@@ -1,0 +1,31 @@
+HEADER 
+TITLE     Built with Packmol                                             
+REMARK   Packmol generated pdb file 
+REMARK   Home-Page: http://m3g.iqm.unicamp.br/packmol
+REMARK
+CRYST1    11.17    11.22    11.21  90.00  90.00  90.00 P 1           1
+HETATM    1  O   HOH A   1       4.767   2.823   9.371  1.00  0.00           O  
+HETATM    2  H1  HOH A   1       5.232   3.542   9.799  1.00  0.00           H  
+HETATM    3  H2  HOH A   1       4.073   2.586   9.983  1.00  0.00           H  
+HETATM    4  O   HOH A   2       5.532   3.585   1.119  1.00  0.00           O  
+HETATM    5  H1  HOH A   2       5.506   2.711   1.510  1.00  0.00           H  
+HETATM    6  H2  HOH A   2       6.174   4.064   1.640  1.00  0.00           H  
+HETATM    7  O   HOH A   3       7.769   7.771   0.560  1.00  0.00           O  
+HETATM    8  H1  HOH A   3       7.024   8.258   0.914  1.00  0.00           H  
+HETATM    9  H2  HOH A   3       7.938   7.087   1.204  1.00  0.00           H  
+HETATM   10  O   HOH A   4       3.732   3.643   7.747  1.00  0.00           O  
+HETATM   11  H1  HOH A   4       4.090   3.982   6.926  1.00  0.00           H  
+HETATM   12  H2  HOH A   4       2.858   3.333   7.519  1.00  0.00           H  
+HETATM   13  O   HOH A   5       4.782   2.735   4.448  1.00  0.00           O  
+HETATM   14  H1  HOH A   5       5.541   2.678   3.867  1.00  0.00           H  
+HETATM   15  H2  HOH A   5       4.182   2.063   4.129  1.00  0.00           H  
+HETATM   16  O   HOH A   6       8.552   1.939   7.246  1.00  0.00           O  
+HETATM   17  H1  HOH A   6       8.143   1.319   6.642  1.00  0.00           H  
+HETATM   18  H2  HOH A   6       8.503   2.782   6.798  1.00  0.00           H  
+HETATM   19  O   HOH A   7       0.645   5.466   9.030  1.00  0.00           O  
+HETATM   20  H1  HOH A   7       0.491   5.572   9.969  1.00  0.00           H  
+HETATM   21  H2  HOH A   7       1.009   4.587   8.942  1.00  0.00           H  
+HETATM   22  O   HOH A   8       2.215   8.135   9.288  1.00  0.00           O  
+HETATM   23  H1  HOH A   8       2.424   7.277   8.918  1.00  0.00           H  
+HETATM   24  H2  HOH A   8       1.424   8.410   8.829  1.00  0.00           H  
+END

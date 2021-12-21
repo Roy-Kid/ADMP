@@ -1,4 +1,4 @@
-from operator import index
+
 from xml.dom import minidom
 import numpy as np
 import warnings
