@@ -1,8 +1,6 @@
-# author: lijichen
-#         yanglan
-#         chenjunmin
-# contact: lijichen365@126.com
-# date: 2021-12-21
+#!/usr/bin/env python3
+# author: yl
+# date : 2021-12-16
 # version: 0.0.1
 import sys
 import time
@@ -12,491 +10,104 @@ import jax.numpy as jnp
 jnp.set_printoptions(precision=16, suppress=True)
 import jax.scipy as jsp
 import numpy as np
-import numpy.testing as npt
 from jax import grad, jit, value_and_grad, vmap
+from jax._src.numpy.lax_numpy import reciprocal
+from jax.config import config
 from jax.scipy.special import erf
 from jax_md import partition, space
 
-# from python.parser import assemble_covalent, init_residues, read_pdb, read_xml
+from python.parser import assemble_covalent, init_residues, read_pdb, read_xml
 
-# from jax.config import config
-# config.update("jax_enable_x64", True)
+config.update("jax_enable_x64", True)
 
-from xml.dom import minidom
-import numpy as np
-import warnings
-from collections import defaultdict
+def construct_nblist(positions, box, rc):
+    jax.lax.stop_gradient(box)
+    jax.lax.stop_gradient(rc)
+    # Some constants
+    CELL_LIST_BUFFER = 80
+    MAX_N_NEIGHBOURS = 600
 
-def read_atom_line(line_full):
-    """
-    Read atom line from pdb format
-    HETATM    1  H14 ORTE    0       6.301   0.693   1.919  1.00  0.00        H
-    
-    1-6 7-11 13-16 17 18-20 22 23-26 27 28-30 31-38 39-46 47-54 55-60 61-66 67-72 73-76 77-78 79-80
-    ATOM serial name altLoc resName chainID resSeq iCode _ x y z occupancy tempFactor _ segID element charge
-    """
+    # construct cells
+    box_inv = np.linalg.inv(box)
+    # len_abc_star = np.linalg.norm(box_inv, axis=0)
+    len_abc_star = np.sqrt(np.sum(box_inv*box_inv, axis=0))
+    h_box = 1 / len_abc_star # the "heights" of the box
+    n_cells = np.floor(h_box/rc).astype(np.int32)
+    n_totc = np.prod(n_cells)
+    n_atoms = len(positions)
+    density = n_atoms / np.prod(n_cells)
+    n_max = int(np.floor(density)) + CELL_LIST_BUFFER
+    cell = np.diag(1./n_cells).dot(box)
+    cell_inv = np.linalg.inv(cell)
 
-    line = line_full.rstrip("\n")
-    type_atm = line[0:6]
-    if type_atm == "ATOM  " or type_atm == "HETATM":
+    upositions = positions.dot(cell_inv)
+    indices = np.floor(upositions).astype(np.int32)
+    # for safty, do pbc shift
+    indices[:, 0] = indices[:, 0] % n_cells[0]
+    indices[:, 1] = indices[:, 1] % n_cells[1]
+    indices[:, 2] = indices[:, 2] % n_cells[2]
+    cell_list = np.full((n_cells[0], n_cells[1], n_cells[2], n_max), -1)
+    counts = np.full((n_cells[0], n_cells[1], n_cells[2]), 0)
+    for i_atom in range(n_atoms):
+        ia, ib, ic = indices[i_atom]
+        cell_list[ia, ib, ic, counts[ia, ib, ic]] = i_atom
+        counts[ia, ib, ic] += 1
 
-        # Roy
-        serial = line[7:12].strip()
+    # cell adjacency
+    na, nb, nc = n_cells
+    cell_list = cell_list.reshape((n_totc, n_max))
+    counts = counts.reshape(n_totc)
+   
+    rc2 = rc * rc
+    nbs = np.empty((n_atoms, MAX_N_NEIGHBOURS), dtype=np.int32)
+    n_nbs = np.zeros(n_atoms, dtype=np.int32)
+    distances2 = np.empty((n_atoms, MAX_N_NEIGHBOURS))
+    dr_vecs = np.empty((n_atoms, MAX_N_NEIGHBOURS, 3))
+    icells_3d = np.empty((n_totc, 3))
+    for ic in range(n_totc):
+        icells_3d[ic] = np.array([ic // (nb*nc), (ic // nc) % nb, ic % nc], dtype=np.int32)
+    for ic in range(n_totc):
+        ic_3d = icells_3d[ic]
+        if counts[ic] == 0:
+            continue
+        for jc in range(ic, n_totc):
+            if counts[jc] == 0:
+                continue
+            jc_3d = icells_3d[jc]
+            di_cell = jc_3d - ic_3d
+            di_cell -= (di_cell + n_cells//2) // n_cells * n_cells
+            max_di = np.max(np.abs(di_cell))
+            # two cells are not neighboring
+            if max_di > 1:
+                continue
+            indices_i = cell_list[ic, 0:counts[ic]]
+            indices_j = cell_list[jc, 0:counts[jc]]
+            indices_i = np.repeat(indices_i, counts[jc])
+            indices_j = np.repeat(indices_j, counts[ic]).reshape(-1, counts[ic]).T.flatten()
+            if ic == jc:
+                ifilter = (indices_j > indices_i)
+                indices_i = indices_i[ifilter]
+                indices_j = indices_j[ifilter]
+            ri = positions[indices_i]
+            rj = positions[indices_j]
+            dr = rj - ri
+            ds = np.dot(dr, box_inv)
+            ds -= np.floor(ds+0.5)
+            dr = np.dot(ds, box)
+            drdr = np.sum(dr*dr, axis=1)
+            for ii in np.where(drdr < rc2)[0]:
+                i = indices_i[ii]
+                j = indices_j[ii]
+                nbs[i, n_nbs[i]] = j
+                nbs[j, n_nbs[j]] = i
+                distances2[i, n_nbs[i]] = drdr[ii]
+                distances2[j, n_nbs[j]] = drdr[ii]
+                dr_vecs[i, n_nbs[i], :] = dr[ii]
+                dr_vecs[j, n_nbs[j], :] = -dr[ii]
+                n_nbs[i] += 1
+                n_nbs[j] += 1
 
-        name = line[12:16].strip()
-
-        altLoc = line[16]
-        resName = line[17:21]
-        chainID = line[21]  # Not used
-
-        resSeq = int(line[22:26].split()[0])  # sequence identifier
-        iCode = line[26]  # insertion code, not used
-
-        # atomic coordinates
-        try:
-            coord = np.array(
-                [float(line[30:38]), float(line[38:46]), float(line[46:54])],
-                dtype=np.float64,
-            )
-        except ValueError:
-            raise ValueError("Invalid or missing coordinate(s)")
-
-        # occupancy & B factor
-        try:
-            occupancy = float(line[54:60])
-        except ValueError:
-            occupancy = None  # Rather than arbitrary zero or one
-
-        if occupancy is not None and occupancy < 0:
-            warnings.warn("Negative occupancy in one or more atoms")
-
-        try:
-            bfactor = float(line[60:66])
-        except ValueError:
-            # The PDB use a default of zero if the data is missing
-            bfactor = 0.0
-
-        segid = line[72:76]  # not used
-        element = line[76:78].strip().upper()
-        charge = line[79:81]
-
-    else:
-        raise ValueError("Only ATOM and HETATM supported")
-
-    return (
-        type_atm,
-        serial,
-        name,
-        altLoc,
-        resName.strip(),
-        chainID,
-        resSeq,
-        iCode,
-        coord,
-        occupancy,
-        bfactor,
-        segid,
-        element,
-        charge,
-    )
-
-def read_pdb(file):
-    """Read PDB files."""
-    fileobj = open(file, 'r')
-    orig = np.identity(3)
-    trans = np.zeros(3)
-    serials = []
-    names = []
-    altLocs = []
-    resNames = []
-    chainIDs = []
-    resSeqs = []
-    iCodes = []
-    positions = []
-    occupancies = []
-    tempFactors = []
-    segId = []
-    elements = []
-    charges = []
-    cell = None
-    pbc = None
-    cellpar = []
-    conects = {}
-    # make sure that only one frame is read
-    continue_read_atoms_flag = True
-    # serial starts at 1 and we need to discard it and just keep align with positions
-    id = 0
-    
-    for line in fileobj.readlines():
-        if line.startswith('CRYST1'):
-            cellpar = [float(line[6:15]),  # a
-                       float(line[15:24]),  # b
-                       float(line[24:33]),  # c
-                       float(line[33:40]),  # alpha
-                       float(line[40:47]),  # beta
-                       float(line[47:54])]  # gamma
-
-        for c in range(3):
-            if line.startswith('ORIGX' + '123'[c]):
-                orig[c] = [float(line[10:20]),
-                           float(line[20:30]),
-                           float(line[30:40])]
-                trans[c] = float(line[45:55])
-
-        if (
-            line.startswith("ATOM")
-            or line.startswith("HETATM")
-            and continue_read_atoms_flag
-        ):
-            # Atom name is arbitrary and does not necessarily
-            # contain the element symbol.  The specification
-            # requires the element symbol to be in columns 77+78.
-            # Fall back to Atom name for files that do not follow
-            # the spec, e.g. packmol.
-
-            # line_info = type_atm, serial, name, altLoc, resName, chainID, resSeq, iCode, coord, occupancy, tempFactor, segid, element, charge
-            line_info = read_atom_line(line)
-
-            # serials.append(int(line_info[1]))
-            serials.append(id)
-            id += 1
-            names.append(line_info[2])
-            resNames.append(line_info[4])
-            resSeqs.append(line_info[6])
-            position = np.dot(orig, line_info[8]) + trans
-            positions.append(position)
-            if line_info[9] is not None:
-                occupancies.append(line_info[9])
-            tempFactors.append(line_info[10])
-            elements.append(line_info[-2])
-            charges.append(line_info[-1] or 0)
-
-        if line.startswith("END"):
-            # End of configuration reached
-            # According to the latest PDB file format (v3.30),
-            # this line should start with 'ENDMDL' (not 'END'),
-            # but in this way PDB trajectories from e.g. CP2K
-            # are supported (also VMD supports this format).
-            continue_read_atoms_flag = False
-            pass
-
-        if line.startswith("CONECT"):
-            l = line.split()
-            center_atom_idx = int(l[1])
-            bonded_atom_idx = [int(i) for i in l[2:]]
-
-            conects[center_atom_idx] = bonded_atom_idx
-    fileobj.close()
-    
-    return {'serials': serials,
-           'names': names,
-           'resNames': resNames,
-           'resSeqs': resSeqs,
-           'positions': np.vstack(positions),
-           'charges': charges,
-           'connects': conects,
-           'box': cellpar}
-
-def set_axis_type(atoms):
-    ZThenX = 0
-    Bisector = 1
-    ZBisect = 2
-    ThreeFold = 3
-    Zonly = 4
-    NoAxisType = 5
-    LastAxisTypeIndex = 6    
-    kStrings = ['kz', 'kx', 'ky']
-    
-    for atom in atoms:
-        atomType = atom['type']
-        kIndices = [atomType]
-
-        for kString in kStrings:
-            
-            if kString in atom and atom[kString] != '':
-                kIndices.append(atom[kString])
-        atom['axis_indices'] = kIndices
-
-        # set axis type
-
-        kIndicesLen = len(kIndices)
-
-        if (kIndicesLen > 3):
-            ky = kIndices[3]
-            kyNegative = False
-            if ky.startswith('-'):
-                ky = kIndices[3] = ky[1:]
-                kyNegative = True
-        else:
-            ky = ""
-
-        if (kIndicesLen > 2):
-            kx = kIndices[2]
-            kxNegative = False
-            if kx.startswith('-'):
-                kx = kIndices[2] = kx[1:]
-                kxNegative = True
-        else:
-            kx = ""
-
-        if (kIndicesLen > 1):
-            kz = kIndices[1]
-            kzNegative = False
-            if kz.startswith('-'):
-                kz = kIndices[1] = kz[1:]
-                kzNegative = True
-        else:
-            kz = ""
-
-        while(len(kIndices) < 4):
-            kIndices.append("")
-
-        axisType = ZThenX
-        if (not kz):
-            axisType = NoAxisType
-        if (kz and not kx):
-            axisType = Zonly
-        if (kz and kzNegative or kx and kxNegative):
-            axisType = Bisector
-        if (kx and kxNegative and ky and kyNegative):
-            axisType = ZBisect
-        if (kz and kzNegative and kx and kxNegative and ky and kyNegative):
-            axisType = ThreeFold
-
-        atom['axisType'] = axisType
-
-    return atoms
-
-def read_xml(fileobj):
-    
-    fileobj = minidom.parse(fileobj)
-
-    multipoles = fileobj.getElementsByTagName("Multipole")
-
-    residueTemplates = []
-    atomTemplates = []
-    
-    for r in fileobj.getElementsByTagName('Residue'):
-        
-        resName = r.getAttribute("name")
-        residueTemplate = {'resName': resName, 'atoms': [], }
-
-        
-        for a in r.getElementsByTagName('Atom'):
-            atomName = a.getAttribute('name')
-            atomType = a.getAttribute('type')
-            atomTemplate = {'name': atomName, 'type': atomType}
-
-            residueTemplate['atoms'].append(atomTemplate)
-            atomTemplates.append(atomTemplate)
-            
-        topo = defaultdict(list)
-        for b in r.getElementsByTagName('Bond'):
-            
-            from_ = b.getAttribute('from')
-            to_ = b.getAttribute('to')
-            topo[from_].append(to_)
-            # topo[to_].append(from_)
-
-        residueTemplate['topo'] = dict(topo)
-        residueTemplates.append(residueTemplate)
-
-    for i, multipole in enumerate(multipoles):
-        
-        multiDict = {
-            "c0": float(multipole.getAttribute("c0")),
-            "dX": float(multipole.getAttribute("dX")),
-            "dY": float(multipole.getAttribute("dY")),
-            "dZ": float(multipole.getAttribute("dZ")),
-            "qXX": float(multipole.getAttribute("qXX")),
-            "qXY": float(multipole.getAttribute("qXY")),
-            "qYY": float(multipole.getAttribute("qYY")),
-            "qXZ": float(multipole.getAttribute("qXZ")),
-            "qYZ": float(multipole.getAttribute("qYZ")),
-            "qZZ": float(multipole.getAttribute("qZZ")),
-            "oXXX": float(multipole.getAttribute("oXXX")),
-            "oXXY": float(multipole.getAttribute("oXXY")),
-            "oXYY": float(multipole.getAttribute("oXYY")),
-            "oYYY": float(multipole.getAttribute("oYYY")),
-            "oXXZ": float(multipole.getAttribute("oXXZ")),
-            "oXYZ": float(multipole.getAttribute("oXYZ")),
-            "oYYZ": float(multipole.getAttribute("oYYZ")),
-            "oXZZ": float(multipole.getAttribute("oXZZ")),
-            "oYZZ": float(multipole.getAttribute("oYZZ")),
-            "oZZZ": float(multipole.getAttribute("oZZZ")),
-            "kx": multipole.getAttribute("kx"),
-            "kz": multipole.getAttribute("kz"),
-            "ky": multipole.getAttribute("ky")
-        }
-        
-        for template in atomTemplates:
-            if template['type'] == multipole.getAttribute("type"):
-                template.update(multiDict)
-        
-    
-    for p in fileobj.getElementsByTagName('Polarize'):
-        
-        pxx = p.getAttribute('polarizabilityXX')
-        pyy = p.getAttribute('polarizabilityYY')
-        pzz = p.getAttribute('polarizabilityZZ')
-        thole = p.getAttribute('thole')
-        polarDict = {'polarizabilityXX': pxx, 'polarizabilityYY': pyy, 'polarizabilityZZ':pzz, 'thole': thole}
-
-        for template in atomTemplates:
-            if template['type'] == p.getAttribute('type'):
-                template.update(polarDict)
-    
-    set_axis_type(atomTemplates)
-
-    return atomTemplates, residueTemplates
-        
-class Atom:
-    
-    def __init__(self, serial, name, resName, resSeq, position, charge, ) -> None:
-        self.serial = serial
-        self.name = name
-        self.position = position
-        self.charge = charge
-        self.resName = resName
-        self.charge = charge
-        self.linkAtom = []
-        self.resSeq = resSeq
-        
-    def __eq__(self, o):
-        return o.serial == self.serial
-        
-    def link(self, atom):
-        if atom not in self.linkAtom:
-            self.linkAtom.append(atom)
-        if self not in atom.linkAtom:
-            atom.linkAtom.append(self)
-            
-    def __repr__(self) -> str:
-        return f'< Atom{self.serial}: {self.name} >'
-            
-class Residue:
-    
-    def __init__(self, resName, resSeq) -> None:
-        self.resName = resName
-        self.resSeq = resSeq
-        self.atoms = {}
-        self.topo = []
-        self.covalent_map = {}
-        
-    def add(self, serial, atom):
-        self.atoms[serial] = atom
-        
-    def __next__(self):
-        return next(self.atoms)
-    
-    def __getitem__(self, name):
-        for atom in self.atoms.values():
-            if atom.name == name:
-                return atom
-            
-    def __repr__(self) -> str:
-        return f'< Residue{self.resSeq}: {self.resName} >'
-
-def init_residues(serials, names, resNames, resSeqs, positions, charges, atomTemplates, residueTemplates):
-    
-    residueDicts = {}
-    atomDicts = {}
-    
-    for name, seq in zip(resNames, resSeqs):
-        if seq not in residueDicts:
-            residueDicts[seq] = Residue(name, seq)
-        
-    
-    # build up residue
-    for serial, name, resName, resSeq, position, charge in zip(serials, names, resNames, resSeqs, positions, charges):
-        
-        atom = Atom(serial, name, resName, resSeq, position, charge)
-
-        for a in atomTemplates:
-            if name == a['name']:
-                for k, v in a.items():
-                    setattr(atom, k, v)
-        atomDicts[serial] = atom
-
-        residueDicts[resSeq].add(atom.serial, atom)
-        
-    
-    # build up topo
-    for residue in residueDicts.values():
-        
-        for residueTemplate in residueTemplates:
-            if residueTemplate['resName'] == residue.resName:
-                template = residueTemplate
-
-        for c, p in template['topo'].items():
-            ctemp = template['atoms'][int(c)]
-            catom = residue[ctemp['name']]
-
-            for pp in p:
-                ptemp = template['atoms'][int(pp)]
-                patom = residue[ptemp['name']]
-                catom.link(patom)
-         
-    # build up axis indices
-    for residue in residueDicts.values():
-        
-        for atom in residue.atoms.values():
-            indices = [index if index != '' else -1 for index in atom.axis_indices[1: ]]
-
-            for patom in residue.atoms.values():
-                if patom.serial == atom.serial:
-                    continue
-                for i in range(len(indices)):
-                    if indices[i] == patom.type:
-                        indices[i] = patom.serial
-                        break
-                            
-            atom.axis_indices = indices
-                    
-    
-    # build up covalent map in residue
-        for i in residue.atoms.values():
-            visited = [i.serial]
-            residue.covalent_map[i.serial] = {}
-            for j in i.linkAtom:
-                residue.covalent_map[i.serial][j.serial] = 1
-                visited.append(j.serial)
-                for k in j.linkAtom:
-                    if k.serial not in visited:
-                        residue.covalent_map[i.serial][k.serial] = 2
-                        visited.append(k.serial)
-                    else:
-                        continue
-                    for l in k.linkAtom:
-                        if l.serial not in visited:
-                            residue.covalent_map[i.serial][l.serial] = 3
-                            visited.append(l.serial)
-                        else:
-                            continue
-                        for m in l.linkAtom:
-                            if m.serial not in visited:
-                                residue.covalent_map[i.serial][m.serial] = 4
-                                visited.append(m.serial)
-                            else:
-                                continue
-        
-    return atomDicts, residueDicts
-
-def assemble_covalent(residueDicts, natoms):
-    
-    covalents = [c.covalent_map for c in residueDicts.values()]
-    
-    covalent_map = np.zeros((natoms, natoms), dtype=int)
-    
-    for covalent in covalents:
-        
-        for c, p in covalent.items():
-            
-            for pp, dr in p.items():
-                
-                covalent_map[c][pp] = dr
-                
-    return covalent_map
+    return nbs, n_nbs, distances2, dr_vecs
 
 def setup_ewald_parameters(rc, ethresh, box):
     '''
@@ -804,15 +415,21 @@ def _calc_ePermCoef(mscales, kappa, dr):
     prefactor = dielectric
     rInv = dr**-1
     rInvVec = jnp.array([prefactor*(rInv**i) for i in range(0, 9)])
-
+    # print(f'kappa: {kappa}, dr: {dr}')
     alphaRVec = jnp.array([(kappa*dr)**i for i in range(0, 10)])
-
+    # print(f'alphaRVec: {alphaRVec}')
     X = 2 * jnp.exp( -alphaRVec[2] ) / jnp.sqrt(np.pi)
     tmp = jnp.array(alphaRVec[1])
     doubleFactorial = 1
     facCount = 1
     erfAlphaR = erf(alphaRVec[1])
-
+    # bVec = jnp.empty((6, len(erfAlphaR)))
+    # bVec = bVec.at[1].set(-erfAlphaR.reshape(-1))
+    # for i in range(2, 6):
+    #     bVec = bVec.at[i].set((bVec[i-1]+tmp*X/doubleFactorial))
+    #     facCount += 2
+    #     doubleFactorial *= facCount
+    #     tmp *= 2 * alphaRVec[2]
         
     bVec = jnp.empty((6, len(erfAlphaR)))
 
@@ -822,34 +439,85 @@ def _calc_ePermCoef(mscales, kappa, dr):
         facCount += 2
         doubleFactorial *= facCount
         tmp *= 2 * alphaRVec[2]    
-
-    # C-C: 1
-    cc = rInvVec[1] * (mscales + bVec[2] - alphaRVec[1]*X) 
     
+    # print(f'alphaRVec: {alphaRVec}')
+    
+    # C-C: 1
+    
+    cc = rInvVec[1] * (mscales + bVec[2] - alphaRVec[1]*X) 
+    # print(f'{rInvVec[1][2]} | {mscales[2]} | {bVec[2][2]} | {alphaRVec[1][2]} | {X[2]} ||')
+    # print(f'cc: {cc[2]}')
+    
+    # 1450.9314478584802 | 0 | -0.02207779385219677 | 0.3145898321862940 | 1.022055172461367 ||
+    # 1450.931447858474  | 0 | -0.02207779377742508 | 0.3145898318126631 | 1.022055172699047 ||
+    # -498.5486910914701
+    # -498.5486916455414
+    # -264.5797
+    # -264.5797903622432
+    # -264.5797906562888
+    # 280.8249898025849
+    # 280.8249894904849
+    
+    # 1450.857081080012 | 0 | -0.02208105606864779 | 0.3146059571600517 | 1.0220448029817693 ||
+    # 1450.857081080017 | 0 | -0.02208105599386484 | 0.3146059567863992 | 1.022044803219473 ||
+    # -498.5470496698406
+    # -498.5470491157752
+    # -264.5789189657419
+    # -264.57891925978436
+    # 280.82406490233507
+    # 280.8240645902384
+    
+    # 463.1181861533322 | 1.| -0.4156380597439281 | 0.985597833000002 | 0.4271496534129603 ||
+    # 463.1181861533333 | 1 | -0.4156380587735673 | 0.985597831829425 | 0.4271496543975007 ||
+    # 75.65691715992462
+    # 75.65691692835986
+    # -80.30225187354398
+    # -80.30225162776115
+    # 85.23280987770568
+    # 85.23281013857957
     # C-D: 1
+    
     cd = rInvVec[2] * ( mscales + bVec[2] )
     
     ## D-D: 2
+    
     dd_m0 = -2/3 * rInvVec[3] * (3*(mscales + bVec[3]) + alphaRVec[3]*X )
+    
     dd_m1 = rInvVec[3] * (mscales + bVec[3] - (2/3)*alphaRVec[3]*X)
     
     ## C-Q: 1
+    
     cq = (mscales + bVec[3])*rInvVec[3]
     
     ## D-Q: 2
+    
     dq_m0 = rInvVec[4] * (3* (mscales + bVec[3])+ (4/3) * alphaRVec[5]*X)
     dq_m1 = -jnp.sqrt(3)*rInvVec[4]*(mscales+bVec[3])
     
     ## Q-Q
+    
     qq_m0 = rInvVec[5] * (6* (mscales + bVec[4])+ (4/45)* (-3 + 10*alphaRVec[2]) * alphaRVec[5]*X)
     qq_m1 = -(4/15)*rInvVec[5]*(15*(mscales+bVec[4]) + alphaRVec[5]*X)
     qq_m2 = rInvVec[5]*(mscales + bVec[4] - (4/15)*alphaRVec[5]*X)
-
+    # print(f'cc: {cc}')
+    # print(f'cd: {cd}')
+    # print(f'dd_m0: {dd_m0}')
+    # print(f'dd_m1: {dd_m1}')
+    # print(f'cq: {cq}')
+    # print(f'dq_m0: {dq_m0}')
+    # print(f'dq_m1: {dq_m1}')
+    # print(f'qq_m0: {qq_m0}')
+    # print(f'qq_m1: {qq_m1}')
+    # print(f'qq_m2: {qq_m2}')
     return cc, cd, dd_m0, dd_m1, cq, dq_m0, dq_m1, qq_m0, qq_m1, qq_m2
 
 def _pme_real(dr, qiQI, qiQJ, kappa, mscales):
 
+
+    start_ePerm = time.time()
     cc, cd, dd_m0, dd_m1, cq, dq_m0, dq_m1, qq_m0, qq_m1, qq_m2 = _calc_ePermCoef(mscales, kappa, dr)
+    end_ePerm = time.time()
+    print(f'\t\tePerm costs: {end_ePerm-start_ePerm}')
     Vij0 = cc*qiQJ[:, 0]
 
     start_mult = time.time()
@@ -930,6 +598,8 @@ def _pme_real(dr, qiQI, qiQJ, kappa, mscales):
     Vij = jnp.stack((Vij0, Vij1, Vij2, Vij3, Vij4, Vij5, Vij6, Vij7, Vij8), axis=1)
     Vji = jnp.stack((Vji0, Vji1, Vji2, Vji3, Vji4, Vji5, Vji6, Vji7, Vji8), axis=1)
 
+    end_mult = time.time()
+    print(f'\t\tmulti costs: {end_mult-start_mult}')
     return jnp.array(0.5)*(jnp.sum(qiQI*Vij)+jnp.sum(qiQJ*Vji))
 
 def pme_self(Q_h, kappa, lmax = 2):
@@ -1434,7 +1104,6 @@ def dispersion_real(positions,C_list, kappa,mScales):
     disp10 = (mscales+g10-1)*C10i*C10j/norm_dr**10
     e = jnp.sum(disp6)+jnp.sum(disp8)+jnp.sum(disp10)
     return e
-
 def dispersion_self(C_list, kappa):
     '''
     This function calculates the dispersion self energy
@@ -1728,7 +1397,7 @@ def real_space(positions, Qlocal, box, kappa):
     # mscales = mScales
     
     # --- build pair stack in numpy ---
-
+    start_pair = time.time()
     neighboridx = jax.device_get(nbr.idx)
     mask = neighboridx != positions.shape[0]
     r = np.sum(mask, axis=1)
@@ -1736,7 +1405,8 @@ def real_space(positions, Qlocal, box, kappa):
     pair2 = neighboridx[mask]
     pairs = np.stack((pair1, pair2), axis=1)
     pairs = pairs[pairs[:, 0]<pairs[:, 1]]
-
+    end_pair = time.time()
+    print(f'\tpair cost: {end_pair-start_pair}')
 
     # --- end build pair stack in numpy ---
 
@@ -1746,9 +1416,10 @@ def real_space(positions, Qlocal, box, kappa):
     d = jit(vmap(displacement_fn))
     dr = d(r1, r2)
     norm_dr = jnp.linalg.norm(dr, axis=1)
-
+    start_quasi = time.time()
     Ri = jitted_build_quasi_internal(r1, r2, dr, norm_dr)
-
+    end_quasi = time.time()
+    print(f'\tquasi: {end_quasi-start_quasi}')
     # --- end build quasi internal in numpy ---
 
     # --- build coresponding Q matrix ---
@@ -1765,213 +1436,206 @@ def real_space(positions, Qlocal, box, kappa):
 
     # --- actual calculation and jit ---
     # e, f = jitted_pme_real_energy_and_force(norm_dr, qiQJ, qiQI, kappa, mscales)
-
+    start_calc = time.time()
     e = _pme_real(norm_dr, qiQJ, qiQI, kappa, mscales)
-
+    end_calc = time.time()
+    print(f'\tcalc costs: {end_calc - start_calc}')
     return e
 
+
+
 if __name__ == '__main__':
+    # --- prepare data ---
 
-    nwater = [1, 2, 4, 8, 256, 512, 1024]
-    expect_reals = [841.4659601
-, 1683.038432, 3350.572205, 6738.948528, 215255.7737, 430939.6048, 820895.17716
+    # pdb = 'tests/samples/waterdimer_aligned.pdb'
+    #pdb = 'tests/samples/waterbox_31ang.pdb'
+    pdb = str(sys.argv[1])
+    #pdb = f'tests/samples/water1.pdb'
+    xml = 'mpidwater.xml'
 
-]
-    expect_recis = [37.31618087, 74.50377512, 137.0333287, 311.7320478, 9576.238758, 19274.92973, 78862.62217
-]
-    expect_selfs = [-878.794685, -1757.58937, -3515.178739, -7030.357478, -224971.4393, -449942.8786, -899885.7572
-]
-    for n, expect_real, expect_reci, expect_self in zip(nwater, expect_reals, expect_recis, expect_selfs):
+    # return a dict with raw data from pdb
+    pdbinfo = read_pdb(pdb)
 
-        pdb = f'../tests/samples/water{n}.pdb'
-        #pdb = f'tests/samples/water1.pdb'
-        xml = '../tests/samples/mpidwater.xml'
+    serials = pdbinfo['serials']
+    names = pdbinfo['names']
+    resNames = pdbinfo['resNames']
+    resSeqs = pdbinfo['resSeqs']
+    positions = pdbinfo['positions']
+    charges = pdbinfo['charges']
+    box = pdbinfo['box'] # a, b, c, α, β, γ
+    positions = jnp.asarray(positions)
+    lx = box[0]
+    ly = box[1]
+    lz = box[2]
+    
+    dielectric = 1389.35455846 # in e^2/A
+    mScales = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0])
+    pScales = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0])
+    dScales = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0])
 
-        # return a dict with raw data from pdb
-        pdbinfo = read_pdb(pdb)
+    box = jnp.eye(3)*jnp.array([lx, ly, lz])
 
-        serials = pdbinfo['serials']
-        names = pdbinfo['names']
-        resNames = pdbinfo['resNames']
-        resSeqs = pdbinfo['resSeqs']
-        positions = pdbinfo['positions']
-        charges = pdbinfo['charges']
-        box = pdbinfo['box'] # a, b, c, α, β, γ
-        positions = jnp.asarray(positions)
-        lx = box[0]
-        ly = box[1]
-        lz = box[2]
-        
-        dielectric = 1389.35455846 # in e^2/A
-        mScales = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0])
-        pScales = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0])
-        dScales = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0])
+    rc = 4  # in Angstrom
+    ethresh = 1e-4
 
-        box = jnp.eye(3)*jnp.array([lx, ly, lz])
+    natoms = len(serials)
 
-        rc = 4  # in Angstrom
-        ethresh = 1e-4
+    # Here are the templates[dict] from xml. 
+    # atomTemplates are per-atom info,
+    # residueTemplates contain what atoms in the residue and how they connect. 
+    atomTemplate, residueTemplate = read_xml(xml)
 
-        natoms = len(serials)
+    # then we use the template to init atom and residue objects
+    # TODO: an atomManager and residueManager
+    atomDicts, residueDicts = init_residues(serials, names, resNames, resSeqs, positions, charges, atomTemplate, residueTemplate)
 
-        # Here are the templates[dict] from xml. 
-        # atomTemplates are per-atom info,
-        # residueTemplates contain what atoms in the residue and how they connect. 
-        atomTemplate, residueTemplate = read_xml(xml)
+    Q = np.vstack(
+        [(atom.c0, atom.dX*10, atom.dY*10, atom.dZ*10, atom.qXX*300, atom.qYY*300, atom.qZZ*300, atom.qXY*300, atom.qXZ*300, atom.qYZ*300) for atom in atomDicts.values()]
+    )
 
-        # then we use the template to init atom and residue objects
-        # TODO: an atomManager and residueManager
-        atomDicts, residueDicts = init_residues(serials, names, resNames, resSeqs, positions, charges, atomTemplate, residueTemplate)
+    Qlocal = convert_cart2harm(Q, 2)
+    Qlocal = jnp.array(Qlocal)
+    axis_type = np.array(
+        [atom.axisType for atom in atomDicts.values()]
+    )
 
-        Q = np.vstack(
-            [(atom.c0, atom.dX*10, atom.dY*10, atom.dZ*10, atom.qXX*300, atom.qYY*300, atom.qZZ*300, atom.qXY*300, atom.qXZ*300, atom.qYZ*300) for atom in atomDicts.values()]
-        )
+    axis_indices = np.vstack(
+        [atom.axis_indices for atom in atomDicts.values()]
+    )
+    # covalent_map is simply as N*N matrix now
+    # remove sparse matrix
+    covalent_map = assemble_covalent(residueDicts, natoms)
+    ## TODO: setup kappa
+    kappa, K1, K2, K3 = setup_ewald_parameters(rc, ethresh, box)
+    kappa = 0.657065221219616 
+    # === pre-compile compute function ===
+    jitted_pme_reci_energy_and_force = jit(value_and_grad(gen_pme_reciprocal(axis_type, axis_indices)), static_argnums=(4,5,6,7))
+    construct_localframes = generate_construct_localframes(axis_type, axis_indices)
+    jitted_construct_localframes = jit(construct_localframes)
+    jitted_pme_real_energy_and_force = jit(value_and_grad(real_space, argnums=0))
 
-        Qlocal = convert_cart2harm(Q, 2)
-        Qlocal = jnp.array(Qlocal)
-        axis_type = np.array(
-            [atom.axisType for atom in atomDicts.values()]
-        )
-
-        axis_indices = np.vstack(
-            [atom.axis_indices for atom in atomDicts.values()]
-        )
-        # covalent_map is simply as N*N matrix now
-        # remove sparse matrix
-        covalent_map = assemble_covalent(residueDicts, natoms)
-        ## TODO: setup kappa
-        kappa, K1, K2, K3 = setup_ewald_parameters(rc, ethresh, box)
-        kappa = 0.657065221219616 
-        # === pre-compile compute function ===
-        jitted_pme_reci_energy_and_force = jit(value_and_grad(gen_pme_reciprocal(axis_type, axis_indices)), static_argnums=(4,5,6,7))
-        construct_localframes = generate_construct_localframes(axis_type, axis_indices)
-        jitted_construct_localframes = jit(construct_localframes)
-        jitted_pme_real_energy_and_force = jit(value_and_grad(real_space, argnums=0))
-
-        jitted_disp_real_energy_and_force = jit(value_and_grad(dispersion_real))
-        jitted_disp_self_energy_and_force = jit(value_and_grad(dispersion_self))
-        jitted_disp_reci_energy_and_force = jit(value_and_grad(dispersion_reciprocal),static_argnums=(4,5,6))
-        # === prepare neighborlist ===
-        
-        cell_size = rc
-        displacement_fn, shift_fn = space.periodic_general(box, fractional_coordinates=False)
-        neighbor_list_fn = partition.neighbor_list(displacement_fn, box, cell_size, 0)
-        start_nbl = time.time()
-        nbr = neighbor_list_fn.allocate(positions)
-        #nbr = nbr.update(positions)
+    jitted_disp_real_energy_and_force = jit(value_and_grad(dispersion_real))
+    jitted_disp_self_energy_and_force = jit(value_and_grad(dispersion_self))
+    jitted_disp_reci_energy_and_force = jit(value_and_grad(dispersion_reciprocal),static_argnums=(4,5,6))
+    # === prepare neighborlist ===
+    
+    cell_size = rc
+    displacement_fn, shift_fn = space.periodic_general(box, fractional_coordinates=False)
+    neighbor_list_fn = partition.neighbor_list(displacement_fn, box, cell_size, 0)
+    start_nbl = time.time()
+    nbr = neighbor_list_fn.allocate(positions)
+    #nbr = nbr.update(positions)
 
 
-        # == C_list
-        C_list = np.random.rand(3,natoms)
-        nmol=int(natoms/3)
-        for i in range(nmol):
-            a = i*3
-            b = i*3+1
-            c = i*3+2
-            C_list[0][a]=37.19677405
-            C_list[0][b]=7.6111103
-            C_list[0][c]=7.6111103
-            C_list[1][a]=85.26810658
-            C_list[1][b]=11.90220148
-            C_list[1][c]=11.90220148
-            C_list[2][a]=134.44874488
-            C_list[2][b]=15.05074749
-            C_list[2][c]=15.05074749 
-        end_nbl = time.time()
+    # == C_list
+    C_list = np.random.rand(3,natoms)
+    nmol=int(natoms/3)
+    for i in range(nmol):
+        a = i*3
+        b = i*3+1
+        c = i*3+2
+        C_list[0][a]=37.19677405
+        C_list[0][b]=7.6111103
+        C_list[0][c]=7.6111103
+        C_list[1][a]=85.26810658
+        C_list[1][b]=11.90220148
+        C_list[1][c]=11.90220148
+        C_list[2][a]=134.44874488
+        C_list[2][b]=15.05074749
+        C_list[2][c]=15.05074749 
+    end_nbl = time.time()
+    print(f'nbl costs: {end_nbl - start_nbl}')
+    # === start to calculate ADMP === 
+    ereal, freal = jitted_pme_real_energy_and_force(positions, Qlocal, box, kappa)
+    ereci, freci = jitted_pme_reci_energy_and_force(positions, box, Qlocal, kappa, 2, K1, K2, K3)
+    eself, fself = jitted_pme_self_energy_and_force(Qlocal, kappa)
 
-        # === start to calculate ADMP === 
-        ereal, freal = jitted_pme_real_energy_and_force(positions, Qlocal, box, kappa)
-        ereci, freci = jitted_pme_reci_energy_and_force(positions, box, Qlocal, kappa, 2, K1, K2, K3)
-        eself, fself = jitted_pme_self_energy_and_force(Qlocal, kappa)
+    edisp_real, fdisp_real = jitted_disp_real_energy_and_force(positions,C_list,kappa,mScales)
+    edisp_self, fdisp_self = jitted_disp_self_energy_and_force(C_list, kappa)    
+    edisp_reci, fdisp_reci = jitted_disp_reci_energy_and_force(positions, box, C_list, kappa, K1, K2, K3)
+    # --- start calc pme ---
+    epoch = 100
+    
+    #start_real = time.time()
+    #for i in range(epoch):
+        #ereal, freal = jitted_pme_real_energy_and_force(positions, Qlocal, box, kappa)
+        #ereal.block_until_ready()
+        #freal.block_until_ready()
+    #end_real = time.time()
 
+    #start_reci = time.time()
+    #for i in range(epoch):
+        #ereci, freci = jitted_pme_reci_energy_and_force(positions, box, Qlocal, kappa, 2, K1, K2, K3)
+    #ereci.block_until_ready()
+    #freci.block_until_ready()
+    #end_reci = time.time()
+    
+    #start_self = time.time()
+    #for i in range(epoch):
+        #eself, fself = jitted_pme_self_energy_and_force(Qlocal, kappa)
+    #eself.block_until_ready()
+    #self.block_until_ready()
+    #end_self = time.time()
+    
+    start_real = time.time()
+    for i in range(epoch):
         edisp_real, fdisp_real = jitted_disp_real_energy_and_force(positions,C_list,kappa,mScales)
-        edisp_self, fdisp_self = jitted_disp_self_energy_and_force(C_list, kappa)    
-        edisp_reci, fdisp_reci = jitted_disp_reci_energy_and_force(positions, box, C_list, kappa, K1, K2, K3)
-        
-        npt.assert_allclose(ereal, expect_real, rtol=1e-6)
-        npt.assert_allclose(ereci, expect_reci, rtol=1e-3)
-        npt.assert_allclose(eself, expect_self, rtol=1e-6)
-        # assert ereci == expect_reci, ValueError(f'reci space of {n} water expect {expect_real} != {ereal}')
-        # assert eself == expect_self, ValueError(f'self space of {n} water expect {expect_real} != {ereal}')
-        
-        # --- start calc pme ---
-       #  epoch = 100
-        
-        #start_real = time.time()
-        #for i in range(epoch):
-            #ereal, freal = jitted_pme_real_energy_and_force(positions, Qlocal, box, kappa)
-            #ereal.block_until_ready()
-            #freal.block_until_ready()
-        #end_real = time.time()
+    edisp_real.block_until_ready()
+    fdisp_real.block_until_ready()
+    end_real = time.time()
 
-        #start_reci = time.time()
-        #for i in range(epoch):
-            #ereci, freci = jitted_pme_reci_energy_and_force(positions, box, Qlocal, kappa, 2, K1, K2, K3)
-        #ereci.block_until_ready()
-        #freci.block_until_ready()
-        #end_reci = time.time()
-        
-        #start_self = time.time()
-        #for i in range(epoch):
-            #eself, fself = jitted_pme_self_energy_and_force(Qlocal, kappa)
-        #eself.block_until_ready()
-        #self.block_until_ready()
-        #end_self = time.time()
-        
-        # start_real = time.time()
-        # for i in range(epoch):
-        #     edisp_real, fdisp_real = jitted_disp_real_energy_and_force(positions,C_list,kappa,mScales)
-        # edisp_real.block_until_ready()
-        # fdisp_real.block_until_ready()
-        # end_real = time.time()
+    start_self = time.time()
+    for i in range(epoch):
+        edisp_self, fdisp_self = jitted_disp_self_energy_and_force(C_list, kappa) 
+    edisp_self.block_until_ready()
+    fdisp_self.block_until_ready()
+    end_self = time.time()
 
-        # start_self = time.time()
-        # for i in range(epoch):
-        #     edisp_self, fdisp_self = jitted_disp_self_energy_and_force(C_list, kappa) 
-        # edisp_self.block_until_ready()
-        # fdisp_self.block_until_ready()
-        # end_self = time.time()
+    start_reci = time.time()
+    for i in range(epoch):
+        edisp_reci ,fdisp_reci = jitted_disp_reci_energy_and_force(positions, box, C_list, kappa, K1, K2, K3)
+    edisp_reci.block_until_ready()
+    fdisp_reci.block_until_ready()
+    end_reci = time.time()
+    print(ereal)
+    print(ereci)
+    print(eself)
+    print(f'total : {edisp_real+edisp_reci+edisp_self}')
+    print(edisp_real)
+    print(edisp_reci)
+    print(edisp_self)
+    print(f'real e&f cost: {(end_real - start_real)/epoch}')
+    print(f'reci e&f cost: {(end_reci - start_reci)/epoch}')
+    print(f'self e&f cost: {(end_self - start_self)/epoch}')
+    
 
-        # start_reci = time.time()
-        # for i in range(epoch):
-        #     edisp_reci ,fdisp_reci = jitted_disp_reci_energy_and_force(positions, box, C_list, kappa, K1, K2, K3)
-        # edisp_reci.block_until_ready()
-        # fdisp_reci.block_until_ready()
-        # end_reci = time.time()
-        # print(ereal)
-        # print(ereci)
-        # print(eself)
-        # print(f'total : {edisp_real+edisp_reci+edisp_self}')
-        # print(edisp_real)
-        # print(edisp_reci)
-        # print(edisp_self)
-        # print(f'real e&f cost: {(end_real - start_real)/epoch}')
-        # print(f'reci e&f cost: {(end_reci - start_reci)/epoch}')
-        # print(f'self e&f cost: {(end_self - start_self)/epoch}')  
         
-        # --- end calc pme ---
-        
-        # --- start calc dispersion ---
-        
-        # c_list = [] # 3 x N_a dispersion susceptibilities C_6, C_8, C_10
-        
-        # eself_dispersion = dispersion_self(c_list, kappa)
-        
-        # ereci_dispersion = dispersion_reciprocal(positions, box, c_list, K1, K2, K3)
-        
-        # --- end calc dispersion ---
+    
+    # --- end calc pme ---
+    
+    # --- start calc dispersion ---
+    
+    # c_list = [] # 3 x N_a dispersion susceptibilities C_6, C_8, C_10
+    
+    # eself_dispersion = dispersion_self(c_list, kappa)
+    
+    # ereci_dispersion = dispersion_reciprocal(positions, box, c_list, K1, K2, K3)
+    
+    # --- end calc dispersion ---
 
-        # jax.profiler.stop_trace()
+    # jax.profiler.stop_trace()
 
-        # finite differences
-        # findiff = np.empty((6, 3))
-        # eps = 1e-4
-        # delta = np.zeros((6,3)) 
-        # for i in range(6): 
-        #   for j in range(3): 
-        #     delta[i][j] = eps 
-        #     findiff[i][j] = (real_space(positions+delta/2, Qlocal, box, kappa, mScales) - real_space(positions-delta/2, Qlocal, box, kappa, mScales))/eps
-        #     delta[i][j] = 0
-        # print('partial diff')
-        # print(findiff)
-        # print(freal)
+    # finite differences
+    # findiff = np.empty((6, 3))
+    # eps = 1e-4
+    # delta = np.zeros((6,3)) 
+    # for i in range(6): 
+    #   for j in range(3): 
+    #     delta[i][j] = eps 
+    #     findiff[i][j] = (real_space(positions+delta/2, Qlocal, box, kappa, mScales) - real_space(positions-delta/2, Qlocal, box, kappa, mScales))/eps
+    #     delta[i][j] = 0
+    # print('partial diff')
+    # print(findiff)
+    # print(freal)
+
+    
