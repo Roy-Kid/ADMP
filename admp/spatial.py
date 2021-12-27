@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 import jax.numpy as jnp
+from jax import vmap
 import numpy as np
+from functools import partial
 from admp.settings import *
 
 # This module deals with spatial geometric operations, mainly including:
@@ -27,7 +29,8 @@ def pbc_shift(drvecs, box, box_inv):
     unshifted_dsvecs = drvecs.dot(box_inv)
     dsvecs = unshifted_dsvecs - jnp.floor(unshifted_dsvecs + 0.5)
     return dsvecs.dot(box)
-    
+   
+v_pbc_shift = vmap(pbc_shift, in_axes=(0, None, None), out_axes=0)
     
 def normalize(matrix, axis=1, ord=2):
     '''
@@ -135,14 +138,18 @@ def generate_construct_local_frames(axis_types, axis_indices):
 
         return jnp.stack((vec_x, vec_y, vec_z), axis=1)
 
-    return construct_local_frames
+    if DO_JIT:
+        return jit(construct_local_frames)
+    else:
+        return construct_local_frames
 
 
+@partial(vmap, in_axes=(0, 0, 0, 0), out_axes=0)
 @jit_condition(static_argnums=())
 def build_quasi_internal(r1, r2, dr, norm_dr):
     '''
     Build the quasi-internal frame between a pair of sites
-    In this frame, the z-axis is pointing from r1 to r2
+    In this frame, the z-axis is pointing from r2 to r1
 
     Input:
         r1:
@@ -158,10 +165,13 @@ def build_quasi_internal(r1, r2, dr, norm_dr):
         local_frames:
             N * 3 * 3: local frames, three axes arranged in rows
     '''
-    vectorZ = dr/norm_dr.reshape((-1, 1))
-    vectorX = jnp.where(jnp.logical_or(r1[:, 1] != r2[:, 1], r1[:, 2]!=r2[:, 2]).reshape((-1, 1)), vectorZ+jnp.array([1., 0., 0.]), vectorZ + jnp.array([0., 1., 0.]))
-    dot = jnp.sum(vectorZ * vectorX, axis=1)
-    vectorX -= vectorZ * dot[:, jnp.newaxis]
-    vectorX = vectorX / jnp.linalg.norm(vectorX, axis=1).reshape((-1, 1))
+    vectorZ = dr/norm_dr
+    # vectorX = jnp.where(jnp.logical_or(r1[:, 1] != r2[:, 1], r1[:, 2]!=r2[:, 2]).reshape((-1, 1)), vectorZ+jnp.array([1., 0., 0.]), vectorZ + jnp.array([0., 1., 0.]))
+    vectorX = jnp.where(jnp.logical_or(r1[1]!=r2[1], r1[2]!=r2[2]), vectorZ + jnp.array([1., 0., 0.]), vectorZ + jnp.array([0., 1., 0.]))
+    # dot = jnp.sum(vectorZ * vectorX, axis=1)
+    dot_xz = jnp.dot(vectorZ, vectorX)
+    vectorX -= vectorZ * dot_xz
+    vectorX = vectorX / jnp.linalg.norm(vectorX)
     vectorY = jnp.cross(vectorZ, vectorX)
-    return jnp.stack([vectorX, vectorY, vectorZ], axis=1)
+    return jnp.stack([vectorX, vectorY, vectorZ])
+

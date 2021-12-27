@@ -426,21 +426,6 @@ def calc_distance(r1, r2):
     return dr, norm_dr
 
 
-def build_a_quasi_internal(pos, positions, dr, pairidx):
-    
-    r1 = pos
-    r2 = positions[pairidx]
-    norm_dr = jnp.linalg.norm(dr)
-        
-    vectorZ = dr/norm_dr
-    
-    vectorX = jnp.where(jnp.logical_or(r1[1]!=r2[1], r1[2]!=r2[2]), vectorZ+jnp.array([1., 0., 0.]), vectorZ + jnp.array([0., 1., 0.]))
-    dot = vectorZ * vectorX
-    vectorX -= vectorZ * dot
-    vectorX /= jnp.linalg.norm(vectorX)
-    vectorY = jnp.cross(vectorZ, vectorX)
-    return jnp.stack([vectorX, vectorY, vectorZ], axis=1)
-
 def dispersion_real(positions,C_list, kappa,mScales):
     '''
     This function calculates the dispersion self energy
@@ -465,6 +450,7 @@ def dispersion_real(positions,C_list, kappa,mScales):
     pair2 = neighboridx[mask]
     pairs = np.stack((pair1, pair2), axis=1)
     pairs = pairs[pairs[:, 0]<pairs[:, 1]]
+
     r1 = positions[pairs[:, 0]]
     r2 = positions[pairs[:, 1]]
     d = jit(vmap(displacement_fn))
@@ -759,86 +745,8 @@ def dispersion_reciprocal(positions, box, C_list, kappa, K1, K2, K3):
     # Outputs energy
     return E_recip
 
-jitted_rot_local2global = jit(rot_local2global, static_argnums=2)
-jitted_rot_global2local = jit(rot_global2local, static_argnums=2)
-jitted_pme_self_energy_and_force = jit(value_and_grad(pme_self), static_argnums=2)
-jitted_build_quasi_internal = jit(build_quasi_internal)
 jitted_calc_distance = jit(calc_distance)
-
-def real_space(positions, Qlocal, box, kappa):
-
-    # --- convert Qlocal to Qglobal ---
-    local_frames = jitted_construct_localframes(positions, box)
-    Qglobal = jitted_rot_local2global(Qlocal, local_frames, 2)
-
-    # --- build pair stack in numpy ---
-    start_pair = time.time()
-    neighboridx = jax.device_get(nbr.idx)
-    mask = neighboridx != positions.shape[0]
-    r = np.sum(mask, axis=1)
-    pair1 = np.repeat(np.arange(neighboridx.shape[0]), r)
-    pair2 = neighboridx[mask]
-    pairs = np.stack((pair1, pair2), axis=1)
-    pairs = pairs[pairs[:, 0]<pairs[:, 1]]
-    end_pair = time.time()
-    print(f'\tpair cost: {end_pair-start_pair}')
-
-    # --- end build pair stack in numpy ---
-
-    # --- build quasi internal in numpy ---
-    r1 = positions[pairs[:, 0]]
-    r2 = positions[pairs[:, 1]]
-    d = jit(vmap(displacement_fn))
-    dr = d(r1, r2)
-    norm_dr = jnp.linalg.norm(dr, axis=1)
-    start_quasi = time.time()
-    Ri = jitted_build_quasi_internal(r1, r2, dr, norm_dr)
-    end_quasi = time.time()
-    print(f'\tquasi: {end_quasi-start_quasi}')
-    # --- end build quasi internal in numpy ---
-
-    # --- build coresponding Q matrix ---
-    Q_extendi = Qglobal[pairs[:, 0]]
-    Q_extendj = Qglobal[pairs[:, 1]]
-
-    qiQI = jitted_rot_global2local(Q_extendi, Ri, 2)
-    qiQJ = jitted_rot_global2local(Q_extendj, Ri, 2)
-
-    nbonds = covalent_map[pairs[:, 0], pairs[:, 1]]
-    mscales = mScales[nbonds-1]
-
-    # --- end build coresponding Q matrix ---
-
-    # --- actual calculation and jit ---
-    # e, f = jitted_pme_real_energy_and_force(norm_dr, qiQJ, qiQI, kappa, mscales)
-    start_calc = time.time()
-    e = pme_real_kernel(norm_dr, qiQI, qiQJ, mscales, kappa)
-    end_calc = time.time()
-    print(f'\tcalc costs: {end_calc - start_calc}')
-    return e
-
-
-@jit_condition(static_argnums=(2))
-def pme_self(Q_h, kappa, lmax=2):
-    '''
-    This function calculates the PME self energy
-
-    Inputs:
-        Q:
-            N * (lmax+1)^2: harmonic multipoles, local or global does not matter
-        kappa:
-            float: kappa used in PME
-
-    Output:
-        ene_self:
-            float: the self energy
-    '''
-    n_harms = (lmax + 1) ** 2    
-    l_list = np.array([0] + [1,]*3 + [2,]*5)[:n_harms]
-    l_fac2 = np.array([1] + [3,]*3 + [15,]*5)[:n_harms]
-    factor = kappa/np.sqrt(np.pi) * (2*kappa**2)**l_list / l_fac2
-    return - jnp.sum(factor[np.newaxis] * Q_h**2) * DIELECTRIC
-
+jitted_pme_self_energy_and_force = jit(value_and_grad(pme_self), static_argnums=2)
 
 
 if __name__ == '__main__':
@@ -908,9 +816,6 @@ if __name__ == '__main__':
     kappa = 0.657065221219616 
     # === pre-compile compute function ===
     jitted_pme_reci_energy_and_force = jit(value_and_grad(gen_pme_reciprocal(axis_type, axis_indices)), static_argnums=(4,5,6,7))
-    construct_localframes = generate_construct_local_frames(axis_type, axis_indices)
-    jitted_construct_localframes = jit(construct_localframes)
-    jitted_pme_real_energy_and_force = jit(value_and_grad(real_space, argnums=0))
 
     jitted_disp_real_energy_and_force = jit(value_and_grad(dispersion_real))
     jitted_disp_self_energy_and_force = jit(value_and_grad(dispersion_self))
@@ -926,7 +831,7 @@ if __name__ == '__main__':
 
 
     # == C_list
-    C_list = np.random.rand(3,natoms)
+    C_list = np.zeros((3,natoms))
     nmol=int(natoms/3)
     for i in range(nmol):
         a = i*3
@@ -944,17 +849,13 @@ if __name__ == '__main__':
     end_nbl = time.time()
     print(f'nbl costs: {end_nbl - start_nbl}')
     # === start to calculate ADMP === 
-    # debug
-    real_space(positions, Qlocal, box, kappa)
-    ereal, freal = jitted_pme_real_energy_and_force(positions, Qlocal, box, kappa)
     ereci, freci = jitted_pme_reci_energy_and_force(positions, box, Qlocal, kappa, 2, K1, K2, K3)
-    eself, fself = jitted_pme_self_energy_and_force(Qlocal, kappa)
 
     edisp_real, fdisp_real = jitted_disp_real_energy_and_force(positions,C_list,kappa,mScales)
     edisp_self, fdisp_self = jitted_disp_self_energy_and_force(C_list, kappa)    
     edisp_reci, fdisp_reci = jitted_disp_reci_energy_and_force(positions, box, C_list, kappa, K1, K2, K3)
     # --- start calc pme ---
-    epoch = 100
+    epoch = 1
     
     #start_real = time.time()
     #for i in range(epoch):
@@ -997,9 +898,9 @@ if __name__ == '__main__':
     edisp_reci.block_until_ready()
     fdisp_reci.block_until_ready()
     end_reci = time.time()
-    print(ereal)
+    print(0.0)
     print(ereci)
-    print(eself)
+    print(0.0)
     print(f'total : {edisp_real+edisp_reci+edisp_self}')
     print(edisp_real)
     print(edisp_reci)

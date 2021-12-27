@@ -2,7 +2,9 @@
 import sys
 import numpy as np
 import jax.numpy as jnp
+from jax import vmap
 from admp.settings import *
+from functools import partial
 
 # This module deals with the transformations and rotations of multipoles
 
@@ -30,6 +32,8 @@ C2_h2c = jnp.array([[-0.5,     0,     0,  rt3/2,     0],
                     [   0,     0, rt3/2,      0,     0]])
 
 
+@partial(vmap, in_axes=(0, None), out_axes=0)
+@jit_condition(static_argnums=(1))
 def convert_cart2harm(Theta, lmax):
     '''
     Convert the multipole moments in cartesian repr to spherical harmonic repr
@@ -48,18 +52,18 @@ def convert_cart2harm(Theta, lmax):
     if lmax > 2:
         sys.exit('l > 2 (beyond quadrupole) not supported')
 
-    n_sites = Theta.shape[0]
+    # n_sites = Theta.shape[0]
     n_harm = (lmax + 1)**2
     # Q = jnp.zeros((n_sites, n_harm))
-    Q_mono = Theta[:, 0:1]
+    Q_mono = Theta[0:1]
     
     # dipole
     if lmax >= 1:
-        dipoles_cart = Theta[:, 1:4].T
+        dipoles_cart = Theta[1:4].T
         Q_dip = C1_c2h.dot(dipoles_cart).T
     # quadrupole
     if lmax >= 2:
-        quad_cart = Theta[:, 4:10].T
+        quad_cart = Theta[4:10].T
         Q_quad = C2_c2h.dot(quad_cart).T
 
     if lmax == 0:
@@ -71,6 +75,8 @@ def convert_cart2harm(Theta, lmax):
 
     return Q
 
+
+@partial(vmap, in_axes=(0, 0, None), out_axes=0)
 @jit_condition(static_argnums=(2))
 def rot_global2local(Q_gh, localframes, lmax=2):
     '''
@@ -93,25 +99,25 @@ def rot_global2local(Q_gh, localframes, lmax=2):
         raise NotImplementedError('l > 2 (beyond quadrupole) not supported')
 
     # monopole
-    Q_lh_0 = Q_gh[:, 0:1]
+    Q_lh_0 = Q_gh[0:1]
     # for dipole
     if lmax >= 1:
         zxy = jnp.array([2,0,1])
         # the rotation matrix
-        R1 = localframes[:, zxy][:,:,zxy]
+        R1 = localframes[zxy][:,zxy]
         # rotate
-        Q_lh_1 = jnp.sum(R1*Q_gh[:,jnp.newaxis,1:4], axis = 2)
+        Q_lh_1 = jnp.sum(R1*Q_gh[jnp.newaxis,1:4], axis=1)
     if lmax >= 2:
-        xx = localframes[:, 0, 0]
-        xy = localframes[:, 0, 1]
-        xz = localframes[:, 0, 2]
-        yx = localframes[:, 1, 0]
-        yy = localframes[:, 1, 1]
-        yz = localframes[:, 1, 2]
-        zx = localframes[:, 2, 0]
-        zy = localframes[:, 2, 1]
-        zz = localframes[:, 2, 2]
-        quadrupoles = Q_gh[:, 4:9]
+        xx = localframes[0, 0]
+        xy = localframes[0, 1]
+        xz = localframes[0, 2]
+        yx = localframes[1, 0]
+        yy = localframes[1, 1]
+        yz = localframes[1, 2]
+        zx = localframes[2, 0]
+        zy = localframes[2, 1]
+        zz = localframes[2, 2]
+        quadrupoles = Q_gh[4:9]
         # construct the local->global transformation matrix
         # this is copied directly from the convert_mom_to_xml.py code
         C2_gl_00 = (3*zz**2-1)/2
@@ -148,8 +154,8 @@ def rot_global2local(Q_gh, localframes, lmax=2):
                 [C2_gl_03, C2_gl_13, C2_gl_23, C2_gl_33, C2_gl_43],
                 [C2_gl_04, C2_gl_14, C2_gl_24, C2_gl_34, C2_gl_44]
             ]
-        ).swapaxes(0,2)
-        Q_lh_2 = jnp.einsum('ijk,ik->ij', C2_gl, quadrupoles)
+        ).swapaxes(0,1)
+        Q_lh_2 = jnp.einsum('jk,k->j', C2_gl, quadrupoles)
     if lmax == 0:
         Q_lh = Q_lh_0
     elif lmax == 1:
@@ -160,7 +166,7 @@ def rot_global2local(Q_gh, localframes, lmax=2):
     return Q_lh
 
 
-@jit_condition(static_argnums=(2))
+# @jit_condition(static_argnums=(2))
 def rot_local2global(Q_lh, localframes, lmax=2):
     '''
     This function rotates harmonic moments Q from global frame to local frame
@@ -179,5 +185,5 @@ def rot_local2global(Q_lh, localframes, lmax=2):
         Q_gh:
             n * (l+1)^2, stores the rotated global harmonic multipole moments
     '''
-    return rot_global2local(Q_lh, jnp.swapaxes(localframes, -1, -2), lmax)
+    return rot_global2local(Q_lh, jnp.swapaxes(localframes, -2, -1), lmax)
 

@@ -10,7 +10,7 @@ from jax_md import partition, space
 from admp.parser import *
 from admp.multipole import *
 from admp.spatial import *
-from jax import grad
+from jax import grad, value_and_grad
 
 # Functions that are related to electrostatic pme
 
@@ -61,10 +61,12 @@ def setup_ewald_parameters(rc, ethresh, box):
 
 
 # @jit_condition(static_argnums=())
-def energy_pme(positions, box, Q_local, mScales, pScales, dScales, 
-        pairs, covalent_map, construct_local_frame_fn, kappa, K1, K2, K3, lmax):
+def energy_pme(positions, box, pairs,
+        Q_local, mScales, pScales, dScales, covalent_map, 
+        construct_local_frame_fn, kappa, K1, K2, K3, lmax):
     '''
     This is the top-level wrapper for multipole PME
+
     Input:
         positions:
             Na * 3: positions
@@ -94,12 +96,13 @@ def energy_pme(positions, box, Q_local, mScales, pScales, dScales,
     local_frames = construct_local_frame_fn(positions, box)
     Q_global = rot_local2global(Q_local, local_frames, lmax)
 
-    ene_real = pme_real(positions, box, Q_global, mScales, covalent_map, kappa, pairs, lmax)
+    ene_real = pme_real(positions, box, pairs, Q_global, mScales, covalent_map, kappa, lmax)
 
-    ene_self = pme_self(Q_global, kappa, lmax)
+    ene_self = pme_self(Q_local, kappa, lmax)
     return ene_real
 
 
+# @partial(vmap, in_axes=(0, 0, None, None), out_axes=0)
 @jit_condition(static_argnums=(3))
 def calc_e_perm(dr, mscales, kappa, lmax=2):
 
@@ -134,7 +137,8 @@ def calc_e_perm(dr, mscales, kappa, lmax=2):
     facCount = 1
     erfAlphaR = erf(alphaRVec[1])
         
-    bVec = jnp.empty((6, len(erfAlphaR)))
+    # bVec = jnp.empty((6, len(erfAlphaR)))
+    bVec = jnp.empty(6)
 
     bVec = bVec.at[1].set(-erfAlphaR)
     for i in range(2, 6):
@@ -154,6 +158,7 @@ def calc_e_perm(dr, mscales, kappa, lmax=2):
     else:
         dd_m0 = 0
         dd_m1 = 0
+
     if lmax >= 2:
         ## C-Q: 1
         cq = (mscales + bVec[3]) * rInvVec[3]
@@ -175,6 +180,7 @@ def calc_e_perm(dr, mscales, kappa, lmax=2):
     return cc, cd, dd_m0, dd_m1, cq, dq_m0, dq_m1, qq_m0, qq_m1, qq_m2
 
 
+@partial(vmap, in_axes=(0, 0, 0, 0, None, None), out_axes=0)
 @jit_condition(static_argnums=(5))
 def pme_real_kernel(dr, qiQI, qiQJ, mscales, kappa, lmax=2):
     '''
@@ -202,58 +208,58 @@ def pme_real_kernel(dr, qiQI, qiQJ, mscales, kappa, lmax=2):
 
     cc, cd, dd_m0, dd_m1, cq, dq_m0, dq_m1, qq_m0, qq_m1, qq_m2 = calc_e_perm(dr, mscales, kappa, lmax)
 
-    Vij0 = cc*qiQI[:, 0]
-    Vji0 = cc*qiQJ[:, 0]
+    Vij0 = cc*qiQI[0]
+    Vji0 = cc*qiQJ[0]
 
     if lmax >= 1:
         # C-D 
-        Vij0 = Vij0 - cd*qiQI[:, 1]
-        Vji1 = -cd*qiQJ[:, 0]
-        Vij1 = cd*qiQI[:, 0]
-        Vji0 = Vji0 + cd*qiQJ[:, 1]
+        Vij0 = Vij0 - cd*qiQI[1]
+        Vji1 = -cd*qiQJ[0]
+        Vij1 = cd*qiQI[0]
+        Vji0 = Vji0 + cd*qiQJ[1]
         # D-D m0 
-        Vij1 += dd_m0 * qiQI[:, 1]
-        Vji1 += dd_m0 * qiQJ[:, 1]    
+        Vij1 += dd_m0 * qiQI[1]
+        Vji1 += dd_m0 * qiQJ[1]    
         # D-D m1 
-        Vij2 = dd_m1*qiQI[:, 2]
-        Vji2 = dd_m1*qiQJ[:, 2]
-        Vij3 = dd_m1*qiQI[:, 3]
-        Vji3 = dd_m1*qiQJ[:, 3]
+        Vij2 = dd_m1*qiQI[2]
+        Vji2 = dd_m1*qiQJ[2]
+        Vij3 = dd_m1*qiQI[3]
+        Vji3 = dd_m1*qiQJ[3]
 
     if lmax >= 2:
         # C-Q
-        Vij0 = Vij0 + cq*qiQI[:, 4]
-        Vji4 = cq*qiQJ[:, 0]
-        Vij4 = cq*qiQI[:, 0]
-        Vji0 = Vji0 + cq*qiQJ[:, 4]
+        Vij0 = Vij0 + cq*qiQI[4]
+        Vji4 = cq*qiQJ[0]
+        Vij4 = cq*qiQI[0]
+        Vji0 = Vji0 + cq*qiQJ[4]
         # D-Q m0
-        Vij1 += dq_m0*qiQI[:, 4]
-        Vji4 += dq_m0*qiQJ[:, 1] 
+        Vij1 += dq_m0*qiQI[4]
+        Vji4 += dq_m0*qiQJ[1] 
         # Q-D m0
-        Vij4 -= dq_m0*qiQI[:, 1]
-        Vji1 -= dq_m0*qiQJ[:, 4]
+        Vij4 -= dq_m0*qiQI[1]
+        Vji1 -= dq_m0*qiQJ[4]
         # D-Q m1
-        Vij2 = Vij2 + dq_m1*qiQI[:, 5]
-        Vji5 = dq_m1*qiQJ[:, 2]
-        Vij3 += dq_m1*qiQI[:, 6]
-        Vji6 = dq_m1*qiQJ[:, 3]
-        Vij5 = -(dq_m1*qiQI[:, 2])
-        Vji2 += -(dq_m1*qiQJ[:, 5])
-        Vij6 = -(dq_m1*qiQI[:, 3])
-        Vji3 += -(dq_m1*qiQJ[:, 6])
+        Vij2 = Vij2 + dq_m1*qiQI[5]
+        Vji5 = dq_m1*qiQJ[2]
+        Vij3 += dq_m1*qiQI[6]
+        Vji6 = dq_m1*qiQJ[3]
+        Vij5 = -(dq_m1*qiQI[2])
+        Vji2 += -(dq_m1*qiQJ[5])
+        Vij6 = -(dq_m1*qiQI[3])
+        Vji3 += -(dq_m1*qiQJ[6])
         # Q-Q m0
-        Vij4 += qq_m0*qiQI[:, 4]
-        Vji4 += qq_m0*qiQJ[:, 4] 
+        Vij4 += qq_m0*qiQI[4]
+        Vji4 += qq_m0*qiQJ[4] 
         # Q-Q m1
-        Vij5 += qq_m1*qiQI[:, 5]
-        Vji5 += qq_m1*qiQJ[:, 5]
-        Vij6 += qq_m1*qiQI[:, 6]
-        Vji6 += qq_m1*qiQJ[:, 6]
+        Vij5 += qq_m1*qiQI[5]
+        Vji5 += qq_m1*qiQJ[5]
+        Vij6 += qq_m1*qiQI[6]
+        Vji6 += qq_m1*qiQJ[6]
         # Q-Q m2
-        Vij7  = qq_m2*qiQI[:, 7]
-        Vji7  = qq_m2*qiQJ[:, 7]
-        Vij8  = qq_m2*qiQI[:, 8]
-        Vji8  = qq_m2*qiQJ[:, 8]
+        Vij7  = qq_m2*qiQI[7]
+        Vji7  = qq_m2*qiQJ[7]
+        Vij8  = qq_m2*qiQI[8]
+        Vji8  = qq_m2*qiQJ[8]
 
     if lmax == 0:
         Vij = Vij0
@@ -262,28 +268,34 @@ def pme_real_kernel(dr, qiQI, qiQJ, mscales, kappa, lmax=2):
         Vij = jnp.stack((Vij0, Vij1, Vij2, Vij3))
         Vji = jnp.stack((Vji0, Vji1, Vji2, Vji3))
     elif lmax == 2:
-        Vij = jnp.stack((Vij0, Vij1, Vij2, Vij3, Vij4, Vij5, Vij6, Vij7, Vij8), axis=1)
-        Vji = jnp.stack((Vji0, Vji1, Vji2, Vji3, Vji4, Vji5, Vji6, Vji7, Vji8), axis=1)
+        Vij = jnp.stack((Vij0, Vij1, Vij2, Vij3, Vij4, Vij5, Vij6, Vij7, Vij8))
+        Vji = jnp.stack((Vji0, Vji1, Vji2, Vji3, Vji4, Vji5, Vji6, Vji7, Vji8))
     else:
         print('Error: Lmax must <= 2')
 
     return jnp.array(0.5) * (jnp.sum(qiQJ*Vij) + jnp.sum(qiQI*Vji))
 
 
-@jit_condition(static_argnums=(7))
-def pme_real(positions, box, Q_global, mScales, covalent_map, kappa, pairs, lmax):
+# @jit_condition(static_argnums=(7))
+def pme_real(positions, box, pairs, 
+        Q_global, 
+        mScales, covalent_map, 
+        kappa, lmax):
     '''
-    This is the real space PME calculator
+    This is the real space PME calculate function
     NOTE: only deals with permanent-permanent multipole interactions
     It expands the pairwise parameters, and then invoke pme_real_kernel
-    Due to the fact that the pairwise parameter expansion is not jit-able, so this function
-    at this level is not jitted, but anything below is jitted
+    It seems pointless to jit it:
+    1. the heavy-lifting kernel function is jitted and vmapped
+    2. len(pairs) keeps changing throughout the simulation, the function would just recompile everytime
 
     Input:
         positions:
             Na * 3: positions
         box:
             3 * 3: box, axes arranged in row
+        pairs:
+            Np * 2: interacting pair indices
         Q_global:
             Na * (l+1)**2: harmonics multipoles of each atom, in global frame
         mScales:
@@ -292,8 +304,6 @@ def pme_real(positions, box, Q_global, mScales, covalent_map, kappa, pairs, lmax
             Na * Na: topological distances between atoms, if i, j are topologically distant, then covalent_map[i, j] == 0
         kappa:
             float: kappa in A^-1
-        pairs:
-            Np * 2: interacting pair indices
         lmax:
             int: maximum L
 
@@ -302,24 +312,24 @@ def pme_real(positions, box, Q_global, mScales, covalent_map, kappa, pairs, lmax
     '''
 
     # expand pairwise parameters, from atomic parameters
+    pairs = pairs[pairs[:, 0] < pairs[:, 1]]
     box_inv = jnp.linalg.inv(box)
     r1 = positions[pairs[:, 0]]
     r2 = positions[pairs[:, 1]]
     Q_extendi = Q_global[pairs[:, 0]]
     Q_extendj = Q_global[pairs[:, 1]]
     nbonds = covalent_map[pairs[:, 0], pairs[:, 1]]
-    print(covalent_map[0])
     mscales = mScales[nbonds-1]
 
     # deals with geometries
     dr = r1 - r2
-    dr = pbc_shift(dr, box, box_inv)
+    dr = v_pbc_shift(dr, box, box_inv)
     norm_dr = jnp.linalg.norm(dr, axis=-1)
     Ri = build_quasi_internal(r1, r2, dr, norm_dr)
     qiQI = rot_global2local(Q_extendi, Ri, lmax)
     qiQJ = rot_global2local(Q_extendj, Ri, lmax)
     # everything should be pair-specific now
-    ene = pme_real_kernel(norm_dr, qiQI, qiQJ, mscales, kappa, lmax)
+    ene = jnp.sum(pme_real_kernel(norm_dr, qiQI, qiQJ, mscales, kappa, lmax))
 
     return ene
 
@@ -331,7 +341,7 @@ def pme_self(Q_h, kappa, lmax=2):
 
     Inputs:
         Q:
-            N * (lmax+1)^2: harmonic multipoles, local or global does not matter
+            Na * (lmax+1)^2: harmonic multipoles, local or global does not matter
         kappa:
             float: kappa used in PME
 
@@ -346,8 +356,7 @@ def pme_self(Q_h, kappa, lmax=2):
     return - jnp.sum(factor[np.newaxis] * Q_h**2) * DIELECTRIC
 
 
-
-
+# below is the validation code
 if __name__ == '__main__':
     pdb = str(sys.argv[1])
     xml = 'mpidwater.xml'
@@ -393,7 +402,7 @@ if __name__ == '__main__':
     neighbor_list_fn = partition.neighbor_list(displacement_fn, box, rc, 0, format=partition.OrderedSparse)
     nbr = neighbor_list_fn.allocate(positions)
     pairs = nbr.idx.T
-    pairs = pairs[pairs[:, 0] < pairs[:, 1]]
+    # pairs = pairs[pairs[:, 0] < pairs[:, 1]]
 
     # invoke pme energy calculator
     # energy_pme(positions, box, Q_local, axis_type, axis_indices, nbr.idx, 2)
@@ -402,8 +411,8 @@ if __name__ == '__main__':
     # for debugging
     kappa = 0.657065221219616
     construct_local_frames_fn = generate_construct_local_frames(axis_type, axis_indices)
-    if DO_JIT:
-        construct_local_frames_fn = jit(construct_local_frames_fn)
-    # print(grad(energy_pme)(positions, box, Q_local, mScales, pScales, dScales, pairs, covalent_map, construct_local_frames_fn, kappa, K1, K2, K3, lmax))
-    print(energy_pme(positions, box, Q_local, mScales, pScales, dScales, pairs, covalent_map, construct_local_frames_fn, kappa, K1, K2, K3, lmax))
-
+    energy_force_pme = value_and_grad(energy_pme)
+    e, f = energy_force_pme(positions, box, pairs, Q_local, mScales, pScales, dScales, covalent_map, construct_local_frames_fn, kappa, K1, K2, K3, lmax)
+    print('ok')
+    e, f = energy_force_pme(positions, box, pairs, Q_local, mScales, pScales, dScales, covalent_map, construct_local_frames_fn, kappa, K1, K2, K3, lmax)
+    print(e)
