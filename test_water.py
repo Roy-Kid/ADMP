@@ -24,115 +24,6 @@ config.update("jax_enable_x64", True)
 
 
 
-def _pme_real(dr, qiQI, qiQJ, kappa, mscales):
-
-
-    start_ePerm = time.time()
-    cc, cd, dd_m0, dd_m1, cq, dq_m0, dq_m1, qq_m0, qq_m1, qq_m2 = calc_e_perm(dr, mscales, kappa)
-    end_ePerm = time.time()
-    print(f'\t\tePerm costs: {end_ePerm-start_ePerm}')
-    Vij0 = cc*qiQJ[:, 0]
-
-    start_mult = time.time()
-
-    Vji0 = cc*qiQI[:, 0]
-
-    # C-D 
-    
-    Vij0 = Vij0 - cd*qiQJ[:, 1]
-    Vji1 = -cd*qiQI[:, 0]
-    Vij1 = cd*qiQJ[:, 0]
-    Vji0 = Vji0 + cd*qiQI[:, 1]
-
-    # D-D m0 
-
-    Vij1 += dd_m0 * qiQJ[:, 1]
-    Vji1 += dd_m0 * qiQI[:, 1]
-    
-    # D-D m1 
-    
-    Vij2 = dd_m1*qiQJ[:, 2]
-    Vji2 = dd_m1*qiQI[:, 2]
-    Vij3 = dd_m1*qiQJ[:, 3]
-    Vji3 = dd_m1*qiQI[:, 3]
-
-    # C-Q
-    
-    Vij0 = Vij0 + cq*qiQJ[:, 4]
-    Vji4 = cq*qiQI[:, 0]
-    Vij4 = cq*qiQJ[:, 0]
-    Vji0 = Vji0 + cq*qiQI[:, 4]
-    
-    # D-Q m0
-    
-    Vij1 += dq_m0*qiQJ[:, 4]
-    Vji4 += dq_m0*qiQI[:, 1] 
-    
-    # Q-D m0
-    
-    Vij4 -= dq_m0*qiQJ[:, 1]
-    Vji1 -= dq_m0*qiQI[:, 4]
-    
-    # D-Q m1
-    
-    Vij2 = Vij2 + dq_m1*qiQJ[:, 5]
-    Vji5 = dq_m1*qiQI[:, 2]
-
-    Vij3 += dq_m1*qiQJ[:, 6]
-    Vji6 = dq_m1*qiQI[:, 3]
-    
-    Vij5 = -(dq_m1*qiQJ[:, 2])
-    Vji2 += -(dq_m1*qiQI[:, 5])
-    
-    Vij6 = -(dq_m1*qiQJ[:, 3])
-    Vji3 += -(dq_m1*qiQI[:, 6])
-    
-    # Q-Q m0
-    
-    Vij4 += qq_m0*qiQJ[:, 4]
-    Vji4 += qq_m0*qiQI[:, 4] 
-    
-    # Q-Q m1
-    
-    Vij5 += qq_m1*qiQJ[:, 5]
-    Vji5 += qq_m1*qiQI[:, 5]
-    Vij6 += qq_m1*qiQJ[:, 6]
-    Vji6 += qq_m1*qiQI[:, 6]
-    
-    # Q-Q m2
-    
-    Vij7  = qq_m2*qiQJ[:, 7]
-    Vji7  = qq_m2*qiQI[:, 7]
-    Vij8  = qq_m2*qiQJ[:, 8]
-    Vji8  = qq_m2*qiQI[:, 8]
-
-        
-    Vij = jnp.stack((Vij0, Vij1, Vij2, Vij3, Vij4, Vij5, Vij6, Vij7, Vij8), axis=1)
-    Vji = jnp.stack((Vji0, Vji1, Vji2, Vji3, Vji4, Vji5, Vji6, Vji7, Vji8), axis=1)
-
-    end_mult = time.time()
-    print(f'\t\tmulti costs: {end_mult-start_mult}')
-    return jnp.array(0.5)*(jnp.sum(qiQI*Vij)+jnp.sum(qiQJ*Vji))
-
-def pme_self(Q_h, kappa, lmax = 2):
-    '''
-    This function calculates the PME self energy
-
-    Inputs:
-        Q:
-            N * (lmax+1)^2: harmonic multipoles, local or global does not matter
-        kappa:
-            float: kappa used in PME
-
-    Output:
-        ene_self:
-            float: the self energy
-    '''
-    n_harms = (lmax + 1) ** 2    
-    l_list = np.array([0]+[1,]*3+[2,]*5)[:n_harms]
-    l_fac2 = np.array([1]+[3,]*3+[15,]*5)[:n_harms]
-    factor = kappa/np.sqrt(np.pi) * (2*kappa**2)**l_list / l_fac2
-    return - jnp.sum(factor[np.newaxis] * Q_h**2) * dielectric
 
 def gen_pme_reciprocal(axis_type, axis_indices):
     construct_localframes = generate_construct_local_frames(axis_type, axis_indices)
@@ -534,16 +425,6 @@ def calc_distance(r1, r2):
     norm_dr = jnp.linalg.norm(dr, axis=1)
     return dr, norm_dr
 
-def build_quasi_internal(r1, r2, dr, norm_dr):
-
-    vectorZ = dr/norm_dr.reshape((-1, 1))
-
-    vectorX = jnp.where(jnp.logical_or(r1[:, 1] != r2[:, 1], r1[:, 2]!=r2[:, 2]).reshape((-1, 1)), vectorZ+jnp.array([1., 0., 0.]), vectorZ + jnp.array([0., 1., 0.]))
-    dot = jnp.sum(vectorZ * vectorX, axis=1)
-    vectorX -= vectorZ * dot[:, jnp.newaxis]
-    vectorX = vectorX / jnp.linalg.norm(vectorX, axis=1).reshape((-1, 1))
-    vectorY = jnp.cross(vectorZ, vectorX)
-    return jnp.stack([vectorX, vectorY, vectorZ], axis=1)
 
 def build_a_quasi_internal(pos, positions, dr, pairidx):
     
@@ -890,24 +771,6 @@ def real_space(positions, Qlocal, box, kappa):
     local_frames = jitted_construct_localframes(positions, box)
     Qglobal = jitted_rot_local2global(Qlocal, local_frames, 2)
 
-    # --- end convert Qlocal to Qglobal ---
-    # mask = neighbor.idx != positions.shape[0]
-    # pos_neigh = positions[neighbor.idx]
-    
-    # d = displacement_fn
-    # d = vmap(vmap(d, (None, 0)))
-    # dR = d(positions, pos_neigh)
-
-    # b = build_a_quasi_internal
-    # b = vmap(vmap(b, (None, None, None, 0)), (None, 0, 0, 0))
-    # idx = jnp.arange(neighbor.idx.shape[0])
-    # Ri = b(positions, dR, idx, neighbor.idx)
-
-    # Q_extendi = Qglobal[neighbor.idx]
-    
-    # qiQ = jitted_rot_global2local(Q_extendi, Ri, 2)
-    # mscales = mScales
-    
     # --- build pair stack in numpy ---
     start_pair = time.time()
     neighboridx = jax.device_get(nbr.idx)
@@ -949,10 +812,32 @@ def real_space(positions, Qlocal, box, kappa):
     # --- actual calculation and jit ---
     # e, f = jitted_pme_real_energy_and_force(norm_dr, qiQJ, qiQI, kappa, mscales)
     start_calc = time.time()
-    e = _pme_real(norm_dr, qiQJ, qiQI, kappa, mscales)
+    e = pme_real_kernel(norm_dr, qiQI, qiQJ, mscales, kappa)
     end_calc = time.time()
     print(f'\tcalc costs: {end_calc - start_calc}')
     return e
+
+
+@jit_condition(static_argnums=(2))
+def pme_self(Q_h, kappa, lmax=2):
+    '''
+    This function calculates the PME self energy
+
+    Inputs:
+        Q:
+            N * (lmax+1)^2: harmonic multipoles, local or global does not matter
+        kappa:
+            float: kappa used in PME
+
+    Output:
+        ene_self:
+            float: the self energy
+    '''
+    n_harms = (lmax + 1) ** 2    
+    l_list = np.array([0] + [1,]*3 + [2,]*5)[:n_harms]
+    l_fac2 = np.array([1] + [3,]*3 + [15,]*5)[:n_harms]
+    factor = kappa/np.sqrt(np.pi) * (2*kappa**2)**l_list / l_fac2
+    return - jnp.sum(factor[np.newaxis] * Q_h**2) * DIELECTRIC
 
 
 
@@ -1059,6 +944,8 @@ if __name__ == '__main__':
     end_nbl = time.time()
     print(f'nbl costs: {end_nbl - start_nbl}')
     # === start to calculate ADMP === 
+    # debug
+    real_space(positions, Qlocal, box, kappa)
     ereal, freal = jitted_pme_real_energy_and_force(positions, Qlocal, box, kappa)
     ereci, freci = jitted_pme_reci_energy_and_force(positions, box, Qlocal, kappa, 2, K1, K2, K3)
     eself, fself = jitted_pme_self_energy_and_force(Qlocal, kappa)

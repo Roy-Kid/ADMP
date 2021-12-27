@@ -1,12 +1,13 @@
 #!/usr/bin/env python
 import jax.numpy as jnp
 import numpy as np
+from admp.settings import *
 
 # This module deals with spatial geometric operations, mainly including:
 # 1. PBC related operations
 # 2. Local frame rotation operations
 
-
+@jit_condition(static_argnums=())
 def pbc_shift(drvecs, box, box_inv):
     '''
     Dealing with the pbc shifts of vectors
@@ -67,7 +68,7 @@ def generate_construct_local_frames(axis_types, axis_indices):
     Bisector_filter = (axis_types == Bisector)
     ZBisect_filter = (axis_types == ZBisect)
     ThreeFold_filter = (axis_types == ThreeFold)
-    
+   
     def construct_local_frames(positions, box):
         '''
         This function constructs the local frames for each site
@@ -137,3 +138,30 @@ def generate_construct_local_frames(axis_types, axis_indices):
     return construct_local_frames
 
 
+@jit_condition(static_argnums=())
+def build_quasi_internal(r1, r2, dr, norm_dr):
+    '''
+    Build the quasi-internal frame between a pair of sites
+    In this frame, the z-axis is pointing from r1 to r2
+
+    Input:
+        r1:
+            N * 3, positions of the first vector
+        r2:
+            N * 3, positions of the second vector
+        dr:
+            N * 3, vector pointing from r1 to r2
+        norm_dr:
+            (N,), distances between r1 and r2
+
+    Output:
+        local_frames:
+            N * 3 * 3: local frames, three axes arranged in rows
+    '''
+    vectorZ = dr/norm_dr.reshape((-1, 1))
+    vectorX = jnp.where(jnp.logical_or(r1[:, 1] != r2[:, 1], r1[:, 2]!=r2[:, 2]).reshape((-1, 1)), vectorZ+jnp.array([1., 0., 0.]), vectorZ + jnp.array([0., 1., 0.]))
+    dot = jnp.sum(vectorZ * vectorX, axis=1)
+    vectorX -= vectorZ * dot[:, jnp.newaxis]
+    vectorX = vectorX / jnp.linalg.norm(vectorX, axis=1).reshape((-1, 1))
+    vectorY = jnp.cross(vectorZ, vectorX)
+    return jnp.stack([vectorX, vectorY, vectorZ], axis=1)

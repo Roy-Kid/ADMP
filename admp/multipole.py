@@ -1,7 +1,8 @@
 #!/usr/bin/env python
+import sys
 import numpy as np
 import jax.numpy as jnp
-import sys
+from admp.settings import *
 
 # This module deals with the transformations and rotations of multipoles
 
@@ -70,8 +71,8 @@ def convert_cart2harm(Theta, lmax):
 
     return Q
 
-
-def rot_global2local(Q_gh, localframes, lmax = 2):
+@jit_condition(static_argnums=(2))
+def rot_global2local(Q_gh, localframes, lmax=2):
     '''
     This function rotates harmonic moments Q from global frame to local frame
 
@@ -159,7 +160,8 @@ def rot_global2local(Q_gh, localframes, lmax = 2):
     return Q_lh
 
 
-def rot_local2global(Q_lh, localframes, lmax = 2):
+@jit_condition(static_argnums=(2))
+def rot_local2global(Q_lh, localframes, lmax=2):
     '''
     This function rotates harmonic moments Q from global frame to local frame
     Simply use the rot_global2local, and localframe^-1
