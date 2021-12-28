@@ -1,70 +1,59 @@
-# import numpy as np
-# import sys
-# print(sys.path)
-# import pytest
-# import scipy
-# from python.ADMPForce import ADMPGenerator
-# from scipy.stats import special_ortho_group
-# from simtk.openmm import *
-# from simtk.openmm.app import *
-# from simtk.unit import *
+import pytest
+import jax.numpy as jnp
+from admp.parser import read_pdb, read_xml, init_residues, assemble_covalent
 
-
-# @pytest.fixture
-# def water_dimer():
-#     # basic inputs
-#     mScales = np.array([0.0, 0.0, 0.0, 1.0])
-#     pScales = np.array([0.0, 0.0, 0.0, 1.0])
-#     dScales = np.array([0.0, 0.0, 0.0, 1.0])
-#     rc = 8 # in Angstrom
-#     ethresh = 1e-4
-
-
-#     pdb = 'tests/samples/waterdimer_aligned.pdb'
-#     xml = 'tests/samples/mpidwater.xml'
-#     gen = ADMPGenerator(pdb, xml, rc, ethresh, mScales, pScales, dScales, )
-#     # get a random geometry for testing
-#     scipy.random.seed(1000)
-#     R1 = special_ortho_group.rvs(3)
-#     R2 = special_ortho_group.rvs(3)
+def load(pdbName, xmlName):
+    pdbinfo = read_pdb(pdbName)
+    serials = pdbinfo['serials']
+    names = pdbinfo['names']
+    resNames = pdbinfo['resNames']
+    resSeqs = pdbinfo['resSeqs']
+    positions = pdbinfo['positions']
+    box = pdbinfo['box'] # a, b, c, α, β, γ
+    charges = pdbinfo['charges']
+    positions = jnp.asarray(positions)
+    lx, ly, lz, _, _, _ = box
+    box = jnp.eye(3)*jnp.array([lx, ly, lz])    
+    n_atoms = len(serials)
     
-#     positions = gen.positions
-#     positions[0:3] = positions[0:3].dot(R1)
-#     positions[3:6] = positions[3:6].dot(R2)
-#     positions[3:] += np.array([3.0, 0.0, 0.0])
-#     yield gen
-#     # celllist_1d = neighbor_list.construct_cell_list(positions.T, np.arange(n_atoms, dtype=int), n_atoms, box.T, box_inv.T, rc)
-#     # cell_index_map = neighbor_list.build_cell_index_map(celllist_1d, n_atoms)
-#     # dimensions = np.flip(celllist_1d[0:4], axis=0)
-#     # celllist = celllist_1d[4:].reshape(dimensions)
-#     # nbs_obj = neighbor_list.find_neighbors_for_all(positions.T, celllist_1d, n_atoms, rc, box.T, box_inv.T)
-#     # nbs, n_nbs, distances2, dr_vecs = neighbor_list.construct_nblist(positions, box, rc)
-#     # nbs_obj = neighbor_list.NBLS(nbs, n_nbs, distances2, dr_vecs)
-#     # nbs_obj = neighbor_list.construct_nblist(positions, box, rc)
+    atomTemplate, residueTemplate = read_xml(xmlName)
+    atomDicts, residueDicts = init_residues(serials, names, resNames, resSeqs, positions, charges, atomTemplate, residueTemplate)
+    
+    Q = jnp.vstack(
+        [(atom.c0, atom.dX*10, atom.dY*10, atom.dZ*10, atom.qXX*300, atom.qYY*300, atom.qZZ*300, atom.qXY*300, atom.qXZ*300, atom.qYZ*300) for atom in atomDicts.values()]
+    )
+    # Q = jnp.array(Q)    
+    axis_types = jnp.array(
+        [atom.axisType for atom in atomDicts.values()]
+    )
+    axis_indices = jnp.vstack(
+        [atom.axis_indices for atom in atomDicts.values()]
+    )
+    covalent_map = assemble_covalent(residueDicts, n_atoms)
+    
+    return positions, box, atomDicts, axis_types, axis_indices, covalent_map
 
-#     # lets not consider induction yet ...
-#     # mu_ind = np.zeros((n_atoms, 3))
-#     # kappa, K1, K2, K3 = setup_ewald_parameters(rc, ethresh, box)
-#     # print(kappa, K1, K2, K3)
-#     # kappa = 0.328532611
-
-#     # Q, local_frames = get_mtpls_global(positions, box, mpid_params)
-
-#     # lmax = 2
-#     # ene_real = pme_real(positions, box, Q, lmax, mu_ind, mpid_params['polarizabilities'], rc, kappa, mpid_params['covalent_map'], mScales, pScales, dScales, nbs_obj)
-#     # ene_self = pme_self(Q, int(lmax), kappa)
-
-#     # print('--------- result ------------')
-#     # print('kappa (A^-1):     ', kappa)
-#     # print('ene_real: ',   ene_real)
-#     # print('ene_self:         ', ene_self)
-
-#     pdb = PDBFile(pdb)
-#     forcefield = ForceField(xml)
-#     system = forcefield.createSystem(pdb.topology, nonbondedMethod=LJPME, nonbondedCutoff=8*angstrom, constraints=HBonds, defaultTholeWidth=8)
-#     integrator = VerletIntegrator(1e-10*femtoseconds)
-#     simulation = Simulation(pdb.topology, system, integrator)
-#     context = simulation.context
-#     context.setPositions(positions*angstrom)
-#     state = context.getState(getEnergy=True, getPositions=True)
-#     Etot = state.getPotentialEnergy().value_in_unit(kilojoules_per_mole)
+# jichen: usage of param fixture can refer to
+# https://stackoverflow.com/questions/42014484/pytest-using-fixtures-as-arguments-in-parametrize
+@pytest.fixture(scope='package')
+def water1():
+    return load(f'water1.pdb', 'mpidwater.xml')
+@pytest.fixture(scope='package')
+def water2():
+    return load(f'water2.pdb', 'mpidwater.xml')
+@pytest.fixture(scope='package')
+def water4():
+    return load(f'water4.pdb', 'mpidwater.xml')
+@pytest.fixture(scope='package')
+def water8():
+    return load(f'water8.pdb', 'mpidwater.xml')
+@pytest.fixture(scope='package')
+def water256():
+    return load(f'water256.pdb', 'mpidwater.xml')
+@pytest.fixture(scope='package')
+def water512():
+    return load(f'water512.pdb', 'mpidwater.xml')
+@pytest.fixture(scope='package')
+def water1024():
+    return load(f'water1024.pdb', 'mpidwater.xml')
+        
