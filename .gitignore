@@ -6,6 +6,10 @@ tensorboard/
 node_modules
 yarn-error.log
 .vacode
+para_test
+.pytest_cache
+sub.sh
+*.err
 # C extensions
 *.so
 # Distribution / packaging
