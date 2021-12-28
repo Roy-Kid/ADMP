@@ -119,7 +119,8 @@ class TestResultsWithMPID:
             )
             return e
 
-        e, f = value_and_grad(mock_energy_pme)(
+        energy_force_pme = value_and_grad(mock_energy_pme)
+        e, f = energy_force_pme(
             positions,
             box,
             pairs,

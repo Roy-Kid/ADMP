@@ -358,7 +358,6 @@ def pme_self(Q_h, kappa, lmax=2):
 
 # below is the validation code
 if __name__ == '__main__':
-    sys.path.append('/share/home/jichen/work/ADMP')
     pdb = str(sys.argv[1])
     xml = 'mpidwater.xml'
     pdbinfo = read_pdb(pdb)
