@@ -7,7 +7,7 @@ import time
 
 import jax
 import jax.numpy as jnp
-jnp.set_printoptions(precision=16, suppress=True)
+jnp.set_printoptions(precision=32, suppress=True)
 import jax.scipy as jsp
 import numpy as np
 from jax import grad, jit, value_and_grad, vmap
@@ -326,7 +326,6 @@ def gen_pme_reciprocal(axis_type, axis_indices):
                     Nx * Ny * Nz matrix
             """
 
-
             indices_arr = jnp.mod(m_u0[:,np.newaxis,:]+shifts, N[np.newaxis, np.newaxis, :])
             
             ### jax trick implementation without using for loop
@@ -402,7 +401,7 @@ def gen_pme_reciprocal(axis_type, axis_indices):
 
             E_k = 2*jnp.pi/kpts[3,1:]/jnp.linalg.det(box) * jnp.exp( - kpts[3, 1:] /4 /kappa**2) * jnp.abs(S_k[1:]/theta_k[1:])**2
             return jnp.sum(E_k)
-        
+       
         Nj_Aji_star = get_recip_vectors(N, box)
         m_u0, u0    = u_reference(positions, Nj_Aji_star)
         sph_harms   = sph_harmonics_GO(u0, Nj_Aji_star)
@@ -726,6 +725,7 @@ def dispersion_reciprocal(positions, box, C_list, kappa, K1, K2, K3):
         )**2
 
         S_k_6, S_k_8, S_k_10 = [jnp.fft.fftn(C_mesh).flatten() for C_mesh in C_mesh_list]
+
         
         f_6, f_8, f_10 = f_p(jnp.sqrt(kpts[3])/2/kappa)
         Volume = jnp.linalg.det(box)
@@ -734,6 +734,11 @@ def dispersion_reciprocal(positions, box, C_list, kappa, K1, K2, K3):
         E_6 = factor*kappa**3*jnp.sum(f_6*jnp.abs(S_k_6)**2/theta_k_sr)
         E_8 = factor*kappa**5*jnp.sum(f_8*jnp.abs(S_k_8)**2/theta_k_sr)
         E_10 = factor*kappa**7*jnp.sum(f_10*jnp.abs(S_k_10)**2/theta_k_sr) 
+        # debug
+        C_k = factor*kappa**5 * f_8
+        for i in range(1000):
+            # print('%15.8f%15.8f'%(jnp.real(S_k_6[i]), jnp.imag(S_k_6[i])))
+            print('%15.8f%15.8f'%(jnp.real(C_k[i]), jnp.imag(C_k[i])))
         return E_6 + E_8 + E_10
     
     Nj_Aji_star = get_recip_vectors(N, box)
@@ -837,18 +842,21 @@ if __name__ == '__main__':
         a = i*3
         b = i*3+1
         c = i*3+2
-        C_list[0][a]=37.19677405
-        C_list[0][b]=7.6111103
-        C_list[0][c]=7.6111103
+        # C_list[0][a]=37.19677405
+        # C_list[0][b]=7.6111103
+        # C_list[0][c]=7.6111103
         C_list[1][a]=85.26810658
         C_list[1][b]=11.90220148
         C_list[1][c]=11.90220148
-        C_list[2][a]=134.44874488
-        C_list[2][b]=15.05074749
-        C_list[2][c]=15.05074749 
+        # C_list[2][a]=134.44874488
+        # C_list[2][b]=15.05074749
+        # C_list[2][c]=15.05074749 
     end_nbl = time.time()
     print(f'nbl costs: {end_nbl - start_nbl}')
     # === start to calculate ADMP === 
+    # debug
+    print(dispersion_reciprocal(positions, box, C_list, kappa, K1, K2, K3))
+    sys.exit()
     ereci, freci = jitted_pme_reci_energy_and_force(positions, box, Qlocal, kappa, 2, K1, K2, K3)
 
     edisp_real, fdisp_real = jitted_disp_real_energy_and_force(positions,C_list,kappa,mScales)
