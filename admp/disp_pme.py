@@ -5,6 +5,7 @@ from admp.settings import *
 from admp.spatial import *
 from admp.pme import *
 
+
 def energy_disp_pme(positions, box, pairs,
         c_list, mScales, covalent_map,
         kappa, K1, K2, K3, pmax):
@@ -39,7 +40,7 @@ def energy_disp_pme(positions, box, pairs,
 
     ene_self = disp_pme_self(c_list, kappa, pmax)
 
-    return ene_self
+    return ene_real
 
 
 def disp_pme_real(positions, box, pairs, 
@@ -118,7 +119,7 @@ def disp_pme_real_kernel(ri, rj, ci, cj, box, box_inv, mscales, kappa, pmax):
     dr2 = jnp.dot(dr, dr)
     x2 = kappa * kappa * dr2
     g = g_p(x2, pmax)
-    dr6 = dr2 * dr2 *dr2
+    dr6 = dr2 * dr2 * dr2
     ene = (mscales + g[0] - 1) * ci[0] * cj[0] / dr6
     if pmax >= 8:
         dr8 = dr6 * dr2
@@ -240,12 +241,12 @@ if __name__ == '__main__':
         c_list[0][a]=37.19677405
         c_list[0][b]=7.6111103
         c_list[0][c]=7.6111103
-        c_list[1][a]=85.26810658
-        c_list[1][b]=11.90220148
-        c_list[1][c]=11.90220148
-        c_list[2][a]=134.44874488
-        c_list[2][b]=15.05074749
-        c_list[2][c]=15.05074749
+        # c_list[1][a]=85.26810658
+        # c_list[1][b]=11.90220148
+        # c_list[1][c]=11.90220148
+        # c_list[2][a]=134.44874488
+        # c_list[2][b]=15.05074749
+        # c_list[2][c]=15.05074749
     c_list = jnp.array(c_list.T)
     energy_force_disp_pme = value_and_grad(energy_disp_pme)
     e, f = energy_force_disp_pme(positions, box, pairs, c_list, mScales, covalent_map, kappa, K1, K2, K3, pmax)

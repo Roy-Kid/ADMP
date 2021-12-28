@@ -29,7 +29,7 @@ def generate_pme_recip(Ck_fn, kappa, gamma, pme_order, K1, K2, K3, lmax):
     n_mesh = pme_order**3
     shifts = jnp.array(jnp.meshgrid(bspline_range, bspline_range, bspline_range)).T.reshape((1, n_mesh, 3))
    
-    def energy_pme_recip(positions, box, Q):
+    def pme_recip(positions, box, Q):
         '''
         The generated pme_recip space calculator
         kappa, pme_order, K1, K2, K3, and lmax are passed and fixed when the calculator is generated
@@ -427,9 +427,9 @@ def generate_pme_recip(Ck_fn, kappa, gamma, pme_order, K1, K2, K3, lmax):
             return jnp.sum(E_k)
 
     if DO_JIT:
-        return jit(energy_pme_recip, static_argnums=())
+        return jit(pme_recip, static_argnums=())
     else:
-        return energy_pme_recip
+        return pme_recip
 
 
 def Ck_1(ksq, kappa, V):

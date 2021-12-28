@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 from jax import jit
 
-DO_JIT = True
+DO_JIT = False #True
 
 def jit_condition(*args, **kwargs):
     def jit_deco(func):
