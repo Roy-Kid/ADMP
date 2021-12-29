@@ -27,18 +27,6 @@ class ADMPDispPmeForce:
         self.pme_order = 6
         # setup calculators
         self.refresh_calculators()
-        # self.d6_recip = generate_pme_recip(Ck_6, kappa, True, self.pme_order, K1, K2, K3, 0)
-        # if pmax >= 8:
-        #     self.d8_recip = generate_pme_recip(Ck_8, kappa, True, self.pme_order, K1, K2, K3, 0)
-        # else:
-        #     self.d8_recip = None
-        # if pmax >= 10:
-        #     self.d10_recip = generate_pme_recip(Ck_10, kappa, True, self.pme_order, K1, K2, K3, 0)
-        # else:
-        #     self.d10_recip = None
-        # # create the energy calculator according to PME environment
-        # self.get_energy = self.generate_get_energy()
-        # self.get_forces = value_and_grad(self.get_energy)
         return
 
 
@@ -68,7 +56,7 @@ class ADMPDispPmeForce:
             self.d8_recip = generate_pme_recip(Ck_8, self.kappa, True, self.pme_order, self.K1, self.K2, self.K3, 0)
         else:
             self.d8_recip = None
-        if pmax >= 10:
+        if self.pmax >= 10:
             self.d10_recip = generate_pme_recip(Ck_10, self.kappa, True, self.pme_order, self.K1, self.K2, self.K3, 0)
         else:
             self.d10_recip = None

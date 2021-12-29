@@ -43,11 +43,6 @@ class ADMPPmeForce:
 
         # setup calculators
         self.refresh_calculators()
-        # self.construct_local_frames = generate_construct_local_frames(axis_type, axis_indices)
-        # self.pme_recip = generate_pme_recip(Ck_1, kappa, False, self.pme_order, K1, K2, K3, lmax)
-        # # generate the force calculator
-        # self.get_energy = self.generate_get_energy()
-        # self.get_forces = value_and_grad(self.get_energy)
         return
 
 
@@ -56,7 +51,7 @@ class ADMPPmeForce:
             return energy_pme(positions, box, pairs,
                              Q_local, mScales, pScales, dScales, self.covalent_map,
                              self.construct_local_frames, self.pme_recip,
-                             self.kappa, self.K1, self.K2, self.K3, lmax)
+                             self.kappa, self.K1, self.K2, self.K3, self.lmax)
         return get_energy
 
 
