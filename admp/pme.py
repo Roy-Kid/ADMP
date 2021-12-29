@@ -2,33 +2,82 @@
 import sys
 import numpy as np
 import jax.numpy as jnp
+from jax import grad, value_and_grad
 from jax.scipy.special import erf
 from admp.settings import *
+from admp.multipole import *
+from admp.spatial import *
+
+DIELECTRIC = 1389.35455846
+from admp.recip import *
 
 # for debugging use only
 from jax_md import partition, space
 from admp.parser import *
-from admp.multipole import *
-from admp.spatial import *
-from jax import grad, value_and_grad
+
+# from jax.config import config
+# config.update("jax_enable_x64", True)
 
 # Functions that are related to electrostatic pme
 
-DIELECTRIC = 1389.35455846
+class ADMPPmeForce:
+    '''
+    This is a convenient wrapper for multipolar PME calculations
+    It wrapps all the environment parameters of multipolar PME calculation
+    The so called "environment paramters" means parameters that do not need to be differentiable
+    '''
 
-# class PmeEnv:
-#     '''
-#     This is a convenient wrapper for multipolar PME calculations
-#     It wrapps all the environment parameters of multipolar PME calculation
-#     The so called "environment paramters" means parameters that do not need to be differentiable
-#     '''
+    def __init__(self, box, axis_type, axis_indices, covalent_map, rc, ethresh, lmax):
+        self.axis_type = axis_type
+        self.axis_indices = axis_indices
+        self.rc = rc
+        self.ethresh = ethresh
+        self.lmax = lmax
+        kappa, K1, K2, K3 = setup_ewald_parameters(rc, ethresh, box)
+        self.kappa = kappa
+        self.K1 = K1
+        self.K2 = K2
+        self.K3 = K3
+        self.pme_order = 6
+        self.covalent_map = covalent_map
 
-#     def __init__(self, axis_type, axis_indices, rc, ethresh, lmax):
-#         self.axis_indices = axis_indices
-#         self.axis_type = axis_type
-#         self.rc = rc
-#         self.ethresh = ethresh
-#         self.lmax = lmax
+        # setup calculators
+        self.refresh_calculators()
+        # self.construct_local_frames = generate_construct_local_frames(axis_type, axis_indices)
+        # self.pme_recip = generate_pme_recip(Ck_1, kappa, False, self.pme_order, K1, K2, K3, lmax)
+        # # generate the force calculator
+        # self.get_energy = self.generate_get_energy()
+        # self.get_forces = value_and_grad(self.get_energy)
+        return
+
+
+    def generate_get_energy(self):
+        def get_energy(positions, box, pairs, Q_local, mScales, pScales, dScales):
+            return energy_pme(positions, box, pairs,
+                             Q_local, mScales, pScales, dScales, self.covalent_map,
+                             self.construct_local_frames, self.pme_recip,
+                             self.kappa, self.K1, self.K2, self.K3, lmax)
+        return get_energy
+
+
+    def update_env(self, attr, val):
+        '''
+        Update the environment of the calculator
+        '''
+        setattr(self, attr, val)
+        self.refresh_calculators()
+
+
+    def refresh_calculators(self):
+        '''
+        refresh the energy and force calculators according to the current environment
+        '''
+        self.construct_local_frames = generate_construct_local_frames(self.axis_type, self.axis_indices)
+        self.pme_recip = generate_pme_recip(Ck_1, self.kappa, False, self.pme_order, self.K1, self.K2, self.K3, self.lmax)
+        # generate the force calculator
+        self.get_energy = self.generate_get_energy()
+        self.get_forces = value_and_grad(self.get_energy)
+        return
 
 
 def setup_ewald_parameters(rc, ethresh, box):
@@ -63,7 +112,7 @@ def setup_ewald_parameters(rc, ethresh, box):
 # @jit_condition(static_argnums=())
 def energy_pme(positions, box, pairs,
         Q_local, mScales, pScales, dScales, covalent_map, 
-        construct_local_frame_fn, kappa, K1, K2, K3, lmax):
+        construct_local_frame_fn, pme_recip_fn, kappa, K1, K2, K3, lmax):
     '''
     This is the top-level wrapper for multipole PME
 
@@ -83,6 +132,8 @@ def energy_pme(positions, box, pairs,
             Na * Na: topological distances between atoms, if i, j are topologically distant, then covalent_map[i, j] == 0
         construct_local_frame_fn:
             function: local frame constructors, from generate_local_frame_constructor
+        pme_recip:
+            function: see recip.py, a reciprocal space calculator
         kappa:
             float: kappa in A^-1
         K1, K2, K3:
@@ -98,8 +149,11 @@ def energy_pme(positions, box, pairs,
 
     ene_real = pme_real(positions, box, pairs, Q_global, mScales, covalent_map, kappa, lmax)
 
+    ene_recip = pme_recip_fn(positions, box, Q_global)
+
     ene_self = pme_self(Q_local, kappa, lmax)
-    return ene_real
+
+    return ene_real + ene_recip + ene_self
 
 
 # @partial(vmap, in_axes=(0, 0, None, None), out_axes=0)
@@ -404,15 +458,25 @@ if __name__ == '__main__':
     pairs = nbr.idx.T
     # pairs = pairs[pairs[:, 0] < pairs[:, 1]]
 
-    # invoke pme energy calculator
-    # energy_pme(positions, box, Q_local, axis_type, axis_indices, nbr.idx, 2)
     lmax = 2
-    kappa, K1, K2, K3 = setup_ewald_parameters(rc, ethresh, box)
-    # for debugging
-    kappa = 0.657065221219616
-    construct_local_frames_fn = generate_construct_local_frames(axis_type, axis_indices)
-    energy_force_pme = value_and_grad(energy_pme)
-    e, f = energy_force_pme(positions, box, pairs, Q_local, mScales, pScales, dScales, covalent_map, construct_local_frames_fn, kappa, K1, K2, K3, lmax)
+
+
+    # Finish data preparation
+    # -------------------------------------------------------------------------------------
+    # kappa, K1, K2, K3 = setup_ewald_parameters(rc, ethresh, box)
+    # # for debugging
+    # kappa = 0.657065221219616
+    # construct_local_frames_fn = generate_construct_local_frames(axis_type, axis_indices)
+    # energy_force_pme = value_and_grad(energy_pme)
+    # e, f = energy_force_pme(positions, box, pairs, Q_local, mScales, pScales, dScales, covalent_map, construct_local_frames_fn, kappa, K1, K2, K3, lmax)
+    # print('ok')
+    # e, f = energy_force_pme(positions, box, pairs, Q_local, mScales, pScales, dScales, covalent_map, construct_local_frames_fn, kappa, K1, K2, K3, lmax)
+    # print(e)
+
+    pme_force = ADMPPmeForce(box, axis_type, axis_indices, covalent_map, rc, ethresh, lmax)
+    pme_force.update_env('kappa', 0.657065221219616)
+
+    E, F = pme_force.get_forces(positions, box, pairs, Q_local, mScales, pScales, dScales)
     print('ok')
-    e, f = energy_force_pme(positions, box, pairs, Q_local, mScales, pScales, dScales, covalent_map, construct_local_frames_fn, kappa, K1, K2, K3, lmax)
-    print(e)
+    E, F = pme_force.get_forces(positions, box, pairs, Q_local, mScales, pScales, dScales)
+    print(E)
