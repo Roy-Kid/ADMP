@@ -10,6 +10,7 @@ para_test
 .pytest_cache
 sub.sh
 *.err
+*.out
 # C extensions
 *.so
 # Distribution / packaging

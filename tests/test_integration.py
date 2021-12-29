@@ -5,11 +5,15 @@ from jax import value_and_grad, jit
 from admp.multipole import convert_cart2harm, rot_local2global
 import numpy.testing as npt
 from admp.spatial import generate_construct_local_frames
-from admp.pme import energy_pme, pme_real
+from admp.pme import pme_real, pme_self
+from admp.recip import generate_pme_recip, Ck_1
 
 
 class TestResultsWithMPID:
-    
+    # jichen:
+    # test every part of pme equals to MPID
+    # TODO: 1. Fill in mpid ref data
+    #       2. debug ConcretizationTypeError
     def convertedWater(self, water):
         positions, box, atomDicts, axis_types, axis_indices, covalent_map = water
         Q = jnp.vstack(
@@ -140,3 +144,80 @@ class TestResultsWithMPID:
         npt.assert_allclose(e, expected_e)
         # npt.assert_allclose(f, expected_f)
 
+
+    @pytest.mark.parametrize('water, expected_e', [('water1', -878.794685
+), (
+        'water2', -1757.58937
+
+    )])
+    def test_self_energy_force(self, water, expected_e, request):
+        (
+            positions,
+            Q_local,
+            box,
+            atomDicts,
+            axis_types,
+            axis_indices,
+            covalent_map,
+            rc,
+            lmax,
+            kappa,
+            K1,
+            K2,
+            K3,
+            mScales,
+            pScales,
+            dScales,
+        ) = self.convertedWater(request.getfixturevalue(water))
+        def mock_energy_pme(
+        positions,
+        box,
+        Q_local,
+        mScales,
+        pScales,
+        dScales,
+        covalent_map,
+        kappa,
+        K1,
+        K2,
+        K3,
+        lmax,
+    ):
+
+            e = pme_self(Q_local, kappa, lmax)
+            return e
+
+        energy_force_pme = value_and_grad(mock_energy_pme)
+        e, f = energy_force_pme(positions, box, Q_local, mScales, pScales, dScales, covalent_map, kappa, K1, K2, K3, lmax)
+        npt.assert_allclose(e, expected_e, atol=1e-3)
+        
+    @pytest.mark.parametrize('water, expected_e', [('water1', 37.31618087
+), ('water2', 74.50377512
+)])
+    def test_reci_energy_force(self, water, expected_e, request):
+        (
+            positions,
+            Q_local,
+            box,
+            atomDicts,
+            axis_types,
+            axis_indices,
+            covalent_map,
+            rc,
+            lmax,
+            kappa,
+            K1,
+            K2,
+            K3,
+            mScales,
+            pScales,
+            dScales,
+        ) = self.convertedWater(request.getfixturevalue(water))
+        construct_local_frames_fn = generate_construct_local_frames(axis_types, axis_indices)
+        local_frames = construct_local_frames_fn(positions, box)
+        Q_global = rot_local2global(Q_local, local_frames, lmax)
+
+        pme_order = 6
+        energy_force_pme_recip = value_and_grad(generate_pme_recip(Ck_1, kappa, False, pme_order, K1, K2, K3, lmax))
+        e, f = energy_force_pme_recip(positions, box, Q_global)
+        npt.assert_allclose(e, expected_e, atol=1e-3)      
