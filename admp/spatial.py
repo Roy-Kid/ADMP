@@ -145,7 +145,6 @@ def generate_construct_local_frames(axis_types, axis_indices):
     else:
         return construct_local_frames
 
-
 @partial(vmap, in_axes=(0, 0, 0, 0), out_axes=0)
 @jit_condition(static_argnums=())
 def build_quasi_internal(r1, r2, dr, norm_dr):
