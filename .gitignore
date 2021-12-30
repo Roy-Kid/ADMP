@@ -5,7 +5,13 @@ tensorboard/
 *$py.class
 node_modules
 yarn-error.log
-.vacode
+.vscode
+para_test
+.pytest_cache
+sub.sh
+*.err
+*.out
+assert/
 # C extensions
 *.so
 # Distribution / packaging

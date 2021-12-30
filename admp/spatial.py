@@ -26,11 +26,16 @@ def pbc_shift(drvecs, box, box_inv):
         rvecs:
             N * 3, vectors that have been shifted, in Cartesian
     '''
+    # lijichen
+    # NOTE: Inconsistent behavior
+    # In this function, drvecs must have shape (N, 3)
+    # But within v_pbc_shift, drvecs' shape is (3, )
     unshifted_dsvecs = drvecs.dot(box_inv)
     dsvecs = unshifted_dsvecs - jnp.floor(unshifted_dsvecs + 0.5)
     return dsvecs.dot(box)
    
 v_pbc_shift = vmap(pbc_shift, in_axes=(0, None, None), out_axes=0)
+v_pbc_shift.__doc__ = pbc_shift.__doc__
     
 def normalize(matrix, axis=1, ord=2):
     '''
@@ -38,7 +43,6 @@ def normalize(matrix, axis=1, ord=2):
     '''
     normalised = matrix / jnp.linalg.norm(matrix, axis=axis, keepdims=True, ord=ord)
     return normalised
-
 
 def generate_construct_local_frames(axis_types, axis_indices):
     """
@@ -71,8 +75,9 @@ def generate_construct_local_frames(axis_types, axis_indices):
     Bisector_filter = (axis_types == Bisector)
     ZBisect_filter = (axis_types == ZBisect)
     ThreeFold_filter = (axis_types == ThreeFold)
-   
-    def construct_local_frames(positions, box):
+    
+    
+    def construct_local_frames(positions, box, Bisector_filter, ZBisect_filter, ThreeFold_filter):
         '''
         This function constructs the local frames for each site
 
@@ -139,9 +144,9 @@ def generate_construct_local_frames(axis_types, axis_indices):
         return jnp.stack((vec_x, vec_y, vec_z), axis=1)
 
     if DO_JIT:
-        return jit(construct_local_frames)
+        return jit(partial(construct_local_frames, Bisector_filter=Bisector_filter, ZBisect_filter=ZBisect_filter, ThreeFold_filter=ThreeFold_filter), static_argnums=(2,3,4))
     else:
-        return construct_local_frames
+        return partial(construct_local_frames, Bisector_filter=Bisector_filter, ZBisect_filter=ZBisect_filter, ThreeFold_filter=ThreeFold_filter)
 
 
 @partial(vmap, in_axes=(0, 0, 0, 0), out_axes=0)
