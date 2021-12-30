@@ -4,7 +4,6 @@ from jax import vmap
 import numpy as np
 from functools import partial
 from admp.settings import *
-from functools import partial
 
 # This module deals with spatial geometric operations, mainly including:
 # 1. PBC related operations
@@ -27,11 +26,16 @@ def pbc_shift(drvecs, box, box_inv):
         rvecs:
             N * 3, vectors that have been shifted, in Cartesian
     '''
+    # lijichen
+    # NOTE: Inconsistent behavior
+    # In this function, drvecs must have shape (N, 3)
+    # But within v_pbc_shift, drvecs' shape is (3, )
     unshifted_dsvecs = drvecs.dot(box_inv)
     dsvecs = unshifted_dsvecs - jnp.floor(unshifted_dsvecs + 0.5)
     return dsvecs.dot(box)
    
 v_pbc_shift = vmap(pbc_shift, in_axes=(0, None, None), out_axes=0)
+v_pbc_shift.__doc__ = pbc_shift.__doc__
     
 def normalize(matrix, axis=1, ord=2):
     '''
@@ -107,18 +111,18 @@ def generate_construct_local_frames(axis_types, axis_indices):
 
         vec_x = vec_x.at[not_Zonly_filter].set(normalize(vec_x_not_Zonly, axis=1))
         # Bisector
-        if jnp.sum(Bisector_filter) > 0:
+        if np.sum(Bisector_filter) > 0:
             vec_z_Bisector = vec_z[Bisector_filter] + vec_x[Bisector_filter]
             vec_z = vec_z.at[Bisector_filter].set(normalize(vec_z_Bisector, axis=1))
         # z-bisector
-        if jnp.sum(ZBisect_filter) > 0:
+        if np.sum(ZBisect_filter) > 0:
             vec_y_ZBisect = positions[y_atoms[ZBisect_filter]] - positions[ZBisect_filter]
             vec_y_ZBisect = pbc_shift(vec_y_ZBisect, box, box_inv)
             vec_y_ZBisect = normalize(vec_y_ZBisect, axis=1)
             vec_x_ZBisect = vec_x[ZBisect_filter] + vec_y_ZBisect
             vec_x = vec_x.at[ZBisect_filter].set(normalize(vec_x_ZBisect, axis=1))
         # ThreeFold
-        if jnp.sum(ThreeFold_filter) > 0:
+        if np.sum(ThreeFold_filter) > 0:
             vec_x_threeFold = vec_x[ThreeFold_filter]
             vec_z_threeFold = vec_z[ThreeFold_filter]
             

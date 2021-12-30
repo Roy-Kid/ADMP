@@ -11,6 +11,7 @@ para_test
 sub.sh
 *.err
 *.out
+assert/
 # C extensions
 *.so
 # Distribution / packaging

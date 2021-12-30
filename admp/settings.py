@@ -1,7 +1,12 @@
 #!/usr/bin/env python
 from jax import jit
+from jax import config
 
-DO_JIT = False
+DO_JIT = True
+PRECISION = 'float64'
+if PRECISION == 'float64':
+    config.update("jax_enable_x64", True)
+
 
 def jit_condition(*args, **kwargs):
     def jit_deco(func):
