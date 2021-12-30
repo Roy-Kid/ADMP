@@ -4,11 +4,72 @@ from jax import vmap, value_and_grad
 from admp.settings import *
 from admp.spatial import *
 from admp.pme import *
+from admp.recip import *
+
+class ADMPDispPmeForce:
+    '''
+    This is a convenient wrapper for dispersion PME calculations
+    It wrapps all the environment parameters of multipolar PME calculation
+    The so called "environment paramters" means parameters that do not need to be differentiable
+    '''
+
+    def __init__(self, box, covalent_map, rc, ethresh, pmax):
+        self.covalent_map = covalent_map
+        self.rc = rc
+        self.ethresh = ethresh
+        self.pmax = pmax
+        # Need a different function for dispersion ??? Need tests
+        kappa, K1, K2, K3 = setup_ewald_parameters(rc, ethresh, box)
+        self.kappa = kappa
+        self.K1 = K1
+        self.K2 = K2
+        self.K3 = K3
+        self.pme_order = 6
+        # setup calculators
+        self.refresh_calculators()
+        return
+
+
+    def generate_get_energy(self):
+        def get_energy(positions, box, pairs, c_list, mScales):
+            return energy_disp_pme(positions, box, pairs, 
+                                  c_list, mScales, self.covalent_map,
+                                  self.kappa, self.K1, self.K2, self.K3, self.pmax,
+                                  self.d6_recip, self.d8_recip, self.d10_recip)
+        return get_energy
+
+    
+    def update_env(self, attr, val):
+        '''
+        Update the environment of the calculator
+        '''
+        setattr(self, attr, val)
+        self.refresh_calculators()
+
+
+    def refresh_calculators(self):
+        '''
+        refresh the energy and force calculator according to the current environment
+        '''
+        self.d6_recip = generate_pme_recip(Ck_6, self.kappa, True, self.pme_order, self.K1, self.K2, self.K3, 0)
+        if self.pmax >= 8:
+            self.d8_recip = generate_pme_recip(Ck_8, self.kappa, True, self.pme_order, self.K1, self.K2, self.K3, 0)
+        else:
+            self.d8_recip = None
+        if self.pmax >= 10:
+            self.d10_recip = generate_pme_recip(Ck_10, self.kappa, True, self.pme_order, self.K1, self.K2, self.K3, 0)
+        else:
+            self.d10_recip = None
+        # create the energy calculator according to PME environment
+        self.get_energy = self.generate_get_energy()
+        self.get_forces = value_and_grad(self.get_energy)
+        return
 
 
 def energy_disp_pme(positions, box, pairs,
         c_list, mScales, covalent_map,
-        kappa, K1, K2, K3, pmax):
+        kappa, K1, K2, K3, pmax, 
+        recip_fn6, recip_fn8, recip_fn10):
     '''
     Top level wrapper for dispersion pme
 
@@ -25,6 +86,8 @@ def energy_disp_pme(positions, box, pairs,
             (Nexcl,): permanent multipole-multipole interaction exclusion scalings: 1-2, 1-3 ...
         covalent_map:
             Na * Na: topological distances between atoms, if i, j are topologically distant, then covalent_map[i, j] == 0
+        disp_pme_recip_fn:
+            function: the reciprocal calculator, see recip.py
         kappa:
             float: kappa in A^-1
         K1, K2, K3:
@@ -38,9 +101,15 @@ def energy_disp_pme(positions, box, pairs,
 
     ene_real = disp_pme_real(positions, box, pairs, c_list, mScales, covalent_map, kappa, pmax)
 
+    ene_recip = recip_fn6(positions, box, c_list[:, 0, jnp.newaxis])
+    if pmax >= 8:
+        ene_recip += recip_fn8(positions, box, c_list[:, 1, jnp.newaxis])
+    if pmax >= 10:
+        ene_recip += recip_fn10(positions, box, c_list[:, 2, jnp.newaxis])
+
     ene_self = disp_pme_self(c_list, kappa, pmax)
 
-    return ene_real
+    return ene_real + ene_recip + ene_self
 
 
 def disp_pme_real(positions, box, pairs, 
@@ -241,16 +310,32 @@ if __name__ == '__main__':
         c_list[0][a]=37.19677405
         c_list[0][b]=7.6111103
         c_list[0][c]=7.6111103
-        # c_list[1][a]=85.26810658
-        # c_list[1][b]=11.90220148
-        # c_list[1][c]=11.90220148
-        # c_list[2][a]=134.44874488
-        # c_list[2][b]=15.05074749
-        # c_list[2][c]=15.05074749
+        c_list[1][a]=85.26810658
+        c_list[1][b]=11.90220148
+        c_list[1][c]=11.90220148
+        c_list[2][a]=134.44874488
+        c_list[2][b]=15.05074749
+        c_list[2][c]=15.05074749
     c_list = jnp.array(c_list.T)
-    energy_force_disp_pme = value_and_grad(energy_disp_pme)
-    e, f = energy_force_disp_pme(positions, box, pairs, c_list, mScales, covalent_map, kappa, K1, K2, K3, pmax)
-    print('ok')
-    e, f = energy_force_disp_pme(positions, box, pairs, c_list, mScales, covalent_map, kappa, K1, K2, K3, pmax)
-    print(e)
 
+
+    # Finish data preparation
+    # -------------------------------------------------------------------------------------
+    # pme_order = 6
+    # d6_recip = generate_pme_recip(Ck_6, kappa, True, pme_order, K1, K2, K3, 0)
+    # d8_recip = generate_pme_recip(Ck_8, kappa, True, pme_order, K1, K2, K3, 0)
+    # d10_recip = generate_pme_recip(Ck_10, kappa, True, pme_order, K1, K2, K3, 0)
+    # disp_pme_recip_fns = [d6_recip, d8_recip, d10_recip]
+    # energy_force_disp_pme = value_and_grad(energy_disp_pme)
+    # e, f = energy_force_disp_pme(positions, box, pairs, c_list, mScales, covalent_map, kappa, K1, K2, K3, pmax, *disp_pme_recip_fns)
+    # print('ok')
+    # e, f = energy_force_disp_pme(positions, box, pairs, c_list, mScales, covalent_map, kappa, K1, K2, K3, pmax, *disp_pme_recip_fns)
+    # print(e)
+
+    disp_pme_force = ADMPDispPmeForce(box, covalent_map, rc, ethresh, pmax)
+    disp_pme_force.update_env('kappa', 0.657065221219616)
+
+    E, F = disp_pme_force.get_forces(positions, box, pairs, c_list, mScales)
+    print('ok')
+    E, F = disp_pme_force.get_forces(positions, box, pairs, c_list, mScales)
+    print(E)

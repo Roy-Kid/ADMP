@@ -14,7 +14,6 @@ from admp.spatial import *
 from admp.pme import *
 from jax.config import config
 
-# DO_JIT = False
 # config.update("jax_enable_x64", True)
 
 sqrt_pi = 1.7724538509055159
@@ -547,3 +546,4 @@ if __name__ == '__main__':
     E10, F10 = energy_force_d10_recip(positions, box, c_list[2, :, jnp.newaxis])
     print(E6, E8, E10)
     print(E6 + E8 + E10)
+
