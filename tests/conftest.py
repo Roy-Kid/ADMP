@@ -1,5 +1,6 @@
 import pytest
 import jax.numpy as jnp
+import numpy as np
 from admp.parser import read_pdb, read_xml, init_residues, assemble_covalent
 
 def load(pdbName, xmlName):
@@ -23,10 +24,10 @@ def load(pdbName, xmlName):
         [(atom.c0, atom.dX*10, atom.dY*10, atom.dZ*10, atom.qXX*300, atom.qYY*300, atom.qZZ*300, atom.qXY*300, atom.qXZ*300, atom.qYZ*300) for atom in atomDicts.values()]
     )
     # Q = jnp.array(Q)    
-    axis_types = jnp.array(
+    axis_types = np.array(
         [atom.axisType for atom in atomDicts.values()]
     )
-    axis_indices = jnp.vstack(
+    axis_indices = np.vstack(
         [atom.axis_indices for atom in atomDicts.values()]
     )
     covalent_map = assemble_covalent(residueDicts, n_atoms)
