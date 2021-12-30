@@ -77,7 +77,7 @@ def generate_construct_local_frames(axis_types, axis_indices):
     ThreeFold_filter = (axis_types == ThreeFold)
     
     
-    def construct_local_frames(positions, box, Bisector_filter, ZBisect_filter, ThreeFold_filter):
+    def construct_local_frames(positions, box):
         '''
         This function constructs the local frames for each site
 
@@ -144,10 +144,9 @@ def generate_construct_local_frames(axis_types, axis_indices):
         return jnp.stack((vec_x, vec_y, vec_z), axis=1)
 
     if DO_JIT:
-        return jit(partial(construct_local_frames, Bisector_filter=Bisector_filter, ZBisect_filter=ZBisect_filter, ThreeFold_filter=ThreeFold_filter), static_argnums=(2,3,4))
+        return jit(construct_local_frames)
     else:
-        return partial(construct_local_frames, Bisector_filter=Bisector_filter, ZBisect_filter=ZBisect_filter, ThreeFold_filter=ThreeFold_filter)
-
+        return construct_local_frames
 
 @partial(vmap, in_axes=(0, 0, 0, 0), out_axes=0)
 @jit_condition(static_argnums=())
