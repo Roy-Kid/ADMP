@@ -3,7 +3,7 @@ import jax
 from jax import vmap, value_and_grad
 from admp.settings import *
 from admp.spatial import *
-from admp.pme import *
+from admp.pme import setup_ewald_parameters
 from admp.recip import *
 
 class ADMPDispPmeForce:

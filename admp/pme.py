@@ -12,8 +12,8 @@ DIELECTRIC = 1389.35455846
 from admp.recip import *
 
 # for debugging use only
-from jax_md import partition, space
-from admp.parser import *
+# from jax_md import partition, space
+# from admp.parser import *
 
 # from jax.config import config
 # config.update("jax_enable_x64", True)

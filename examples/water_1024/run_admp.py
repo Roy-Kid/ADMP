@@ -3,10 +3,13 @@ import sys
 import numpy as np
 import jax.numpy as jnp
 from jax import grad, value_and_grad
+from jax_md import partition, space
+from admp.settings import *
 from admp.multipole import *
 from admp.parser import *
 from admp.pme import *
 from admp.disp_pme import *
+from admp.pairwise import *
 
 
 # below is the validation code
@@ -55,13 +58,17 @@ if __name__ == '__main__':
     pmax = 10
 
     # construct the C list
-    c_list = np.zeros((3,n_atoms))
+    c_list = np.zeros((3, n_atoms))
+    a_list = np.zeros(n_atoms)
+    q_list = np.zeros(n_atoms)
+    b_list = np.zeros(n_atoms)
     nmol=int(n_atoms/3)
     for i in range(nmol):
         a = i*3
         b = i*3+1
         c = i*3+2
-        c_list[0][a]=37.19677405
+        # dispersion coeff
+        c_list[0][a]=37.199677405
         c_list[0][b]=7.6111103
         c_list[0][c]=7.6111103
         c_list[1][a]=85.26810658
@@ -70,8 +77,18 @@ if __name__ == '__main__':
         c_list[2][a]=134.44874488
         c_list[2][b]=15.05074749
         c_list[2][c]=15.05074749
-    c_list = jnp.array(c_list.T)
-
+        # q
+        q_list[a] = -0.741706
+        q_list[b] = 0.370853
+        q_list[c] = 0.370853
+        # b, Bohr^-1
+        b_list[a] = 2.00095977
+        b_list[b] = 1.999519942
+        b_list[c] = 1.999519942
+        # a, Hartree
+        a_list[a] = 458.3777
+        a_list[b] = 0.0317
+        a_list[c] = 0.0317
 
     # Finish data preparation
     # -------------------------------------------------------------------------------------
@@ -94,6 +111,7 @@ if __name__ == '__main__':
     pme_force.update_env('kappa', 0.657065221219616)
     E, F = pme_force.get_forces(positions, box, pairs, Q_local, mScales, pScales, dScales)
     print('Electrostatic Energy (kJ/mol)')
+    # E = pme_force.get_energy(positions, box, pairs, Q_local, mScales, pScales, dScales)
     E, F = pme_force.get_forces(positions, box, pairs, Q_local, mScales, pScales, dScales)
     print(E)
 
@@ -101,9 +119,18 @@ if __name__ == '__main__':
     # dispersion
     disp_pme_force = ADMPDispPmeForce(box, covalent_map, rc, ethresh, pmax)
     disp_pme_force.update_env('kappa', 0.657065221219616)
-    E, F = disp_pme_force.get_forces(positions, box, pairs, c_list, mScales)
+    E, F = disp_pme_force.get_forces(positions, box, pairs, c_list.T, mScales)
     print('Dispersion Energy (kJ/mol)')
-    E, F = disp_pme_force.get_forces(positions, box, pairs, c_list, mScales)
+    # E = disp_pme_force.get_energy(positions, box, pairs, c_list.T, mScales)
+    E, F = disp_pme_force.get_forces(positions, box, pairs, c_list.T, mScales)
     print(E)
    
+
+    # short range damping
+    TT_damping_qq_c6 = value_and_grad(generate_pairwise_interaction(TT_damping_qq_c6_kernel, covalent_map, static_args={}))
+    TT_damping_qq_c6(positions, box, pairs, mScales, a_list, b_list, q_list, c_list[0])
+    print('Tang-Tonnies Damping (kJ/mol)')
+    E, F = TT_damping_qq_c6(positions, box, pairs, mScales, a_list, b_list, q_list, c_list[0])
+    print(E)
+
 
