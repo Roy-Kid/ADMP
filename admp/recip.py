@@ -461,10 +461,8 @@ def Ck_10(ksq, kappa, V):
     return sqrt_pi*jnp.pi/2/V*kappa**7 * f / 1260
 
 
-# validation code
-if __name__ == '__main__':
+def validation(pdb):
     jnp.set_printoptions(precision=32, suppress=True)
-    pdb = str(sys.argv[1])
     xml = 'mpidwater.xml'
     pdbinfo = read_pdb(pdb)
     serials = pdbinfo['serials']
@@ -545,4 +543,9 @@ if __name__ == '__main__':
     E10, F10 = energy_force_d10_recip(positions, box, c_list[2, :, jnp.newaxis])
     print(E6, E8, E10)
     print(E6 + E8 + E10)
+    return
 
+
+# validation code
+if __name__ == '__main__':
+    validation(sys.argv[1])

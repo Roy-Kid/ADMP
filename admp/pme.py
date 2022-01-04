@@ -405,9 +405,7 @@ def pme_self(Q_h, kappa, lmax=2):
     return - jnp.sum(factor[np.newaxis] * Q_h**2) * DIELECTRIC
 
 
-# below is the validation code
-if __name__ == '__main__':
-    pdb = str(sys.argv[1])
+def validation(pdb):
     xml = 'mpidwater.xml'
     pdbinfo = read_pdb(pdb)
     serials = pdbinfo['serials']
@@ -475,3 +473,9 @@ if __name__ == '__main__':
     print('ok')
     E, F = pme_force.get_forces(positions, box, pairs, Q_local, mScales, pScales, dScales)
     print(E)
+    return
+
+
+# below is the validation code
+if __name__ == '__main__':
+    validation(sys.argv[1])

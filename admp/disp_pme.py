@@ -6,6 +6,13 @@ from admp.spatial import *
 from admp.pme import setup_ewald_parameters
 from admp.recip import *
 
+# debug
+# from jax_md import partition, space
+# from admp.parser import *
+# from admp.multipole import *
+# from jax import grad, value_and_grad
+# from admp.pme import *
+
 class ADMPDispPmeForce:
     '''
     This is a convenient wrapper for dispersion PME calculations
@@ -262,9 +269,7 @@ def disp_pme_self(c_list, kappa, pmax):
     return E
 
 
-# below is the validation code
-if __name__ == '__main__':
-    pdb = str(sys.argv[1])
+def validation(pdb):
     xml = 'mpidwater.xml'
     pdbinfo = read_pdb(pdb)
     serials = pdbinfo['serials']
@@ -339,3 +344,9 @@ if __name__ == '__main__':
     print('ok')
     E, F = disp_pme_force.get_forces(positions, box, pairs, c_list, mScales)
     print(E)
+    return
+
+
+# below is the validation code
+if __name__ == '__main__':
+    validation(sys.argv[1])

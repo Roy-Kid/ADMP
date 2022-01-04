@@ -79,9 +79,7 @@ def TT_damping_qq_c6_kernel(dr, m, ai, aj, bi, bj, qi, qj, ci, cj):
     return f * m
 
 
-# below is the validation code
-if __name__ == '__main__':
-    pdb = str(sys.argv[1])
+def validation(pdb):
     xml = 'mpidwater.xml'
     pdbinfo = read_pdb(pdb)
     serials = pdbinfo['serials']
@@ -177,3 +175,9 @@ if __name__ == '__main__':
     TT_damping_qq_c6(positions, box, pairs, mScales, a_list, b_list, q_list, c_list[0])
     print('ok')
     print(TT_damping_qq_c6(positions, box, pairs, mScales, a_list, b_list, q_list, c_list[0]))
+    return 
+
+
+# below is the validation code
+if __name__ == '__main__':
+    validation(sys.argv[1])
