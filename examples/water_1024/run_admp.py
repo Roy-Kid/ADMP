@@ -105,10 +105,6 @@ if __name__ == '__main__':
     nbr = neighbor_list_fn.allocate(positions)
     pairs = nbr.idx.T
 
-    print(covalent_map)
-
-    sys.exit()
-
     # electrostatic
     pme_force = ADMPPmeForce(box, axis_type, axis_indices, covalent_map, rc, ethresh, lmax)
     pme_force.update_env('kappa', 0.657065221219616)
