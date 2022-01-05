@@ -71,7 +71,7 @@ def generate_construct_local_frames(axis_types, axis_indices):
     Bisector_filter = (axis_types == Bisector)
     ZBisect_filter = (axis_types == ZBisect)
     ThreeFold_filter = (axis_types == ThreeFold)
-   
+    
     def construct_local_frames(positions, box):
         '''
         This function constructs the local frames for each site
