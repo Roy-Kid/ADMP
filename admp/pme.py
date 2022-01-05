@@ -73,6 +73,16 @@ class ADMPPmeForce:
         self.get_energy = self.generate_get_energy()
         self.get_forces = value_and_grad(self.get_energy)
         return
+    
+    # jichen: abstract method for intellisense
+    def get_energy(positions, box, pairs, Q_local, mScales, pScales, dScales):
+        """to get the top-level wrapper for multipole PME
+        """
+        raise NotImplementedError("get_energy method hasn't been implemented yet")
+    
+    # jichen: abstract method for intellisense
+    def get_forces(positions, box, pairs, Q_local, mScales, pScales, dScales):
+        raise NotImplementedError("get_energy method hasn't been implemented yet")
 
 
 def setup_ewald_parameters(rc, ethresh, box):
