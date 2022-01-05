@@ -5,7 +5,7 @@ tensorboard/
 *$py.class
 node_modules
 yarn-error.log
-.vacode
+.vscode
 # C extensions
 *.so
 # Distribution / packaging

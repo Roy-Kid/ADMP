@@ -34,11 +34,13 @@ def load(pdb_file, xml_file):
         [atom.axis_indices for atom in atomDicts.values()]
     )
     covalent_map = assemble_covalent(residueDicts, n_atoms)
+    jnp.save('Q2.npy', Q)
     Q_local = convert_cart2harm(Q, 2)
+    jnp.save('Q_local.npy', Q_local)
 
     return serials, names, resNames, resSeqs, positions, box, charges, Q_local, axis_type, axis_indices, covalent_map
 
-@pytest.fixture(scope='session', params=[1, 2], ids=lambda x: f'water{x}')
+@pytest.fixture(scope='session', params=[2], ids=lambda x: f'water{x}')
 def water(request):
-    print(f'load {request.param}')
+
     yield f'water{request.param}', load(f'water{request.param}.pdb', 'mpidwater.xml')

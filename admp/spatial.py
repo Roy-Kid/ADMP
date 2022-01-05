@@ -81,6 +81,8 @@ def generate_construct_local_frames(axis_types, axis_indices):
                 N * 3: the positions matrix
             box:
         Outputs:
+            #jichen:
+            #NOTE: It doesn't seem to return Q
             Q: 
                 N*(lmax+1)^2, the multipole moments in global harmonics.
             local_frames:
