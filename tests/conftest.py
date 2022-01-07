@@ -70,8 +70,7 @@ def load(pdb_file, xml_file):
     )
 
 
-@pytest.fixture(scope="session", params=[2], ids=lambda x: f"water{x}")
+@pytest.fixture(scope="session", params=[1, 2, 4, 8, 256, 512, 1024], ids=lambda x: f"water{x}")
 def water(request):
-
-    yield f"water{request.param}", load(f"water{request.param}.pdb", "mpidwater.xml")
+    yield f"{request.param}", load(f"water{request.param}.pdb", "mpidwater.xml")
 
