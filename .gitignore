@@ -10,6 +10,8 @@ yarn-error.log
 *.out
 *.err
 prof/
+# mpid related
+mpidplugin.i
 # C extensions
 *.so
 # Distribution / packaging
