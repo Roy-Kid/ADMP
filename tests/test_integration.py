@@ -15,18 +15,28 @@ from contextlib import contextmanager
 
 
 @contextmanager
-def timer(type, job):
+def timer(type, job, **kwargs):
     try:
         start = time()
         yield
         end = time()
     finally:
-        print(f"{end-start:.4f}s {type}\tpme_force\t[{job}]")
+        print(f"{end-start:.4f}s {type}\tpme_force\t[{job}] {kwargs}")
 
+
+def paramizer():
+    for kappa in [i/10 for i in range(1, 3)]:
+        for rc in range(1, 3):
+            for kmax in range(10, 30, 10):
+                yield (kappa, rc, kmax)
 
 class TestResultWithMPID:
-    @pytest.fixture(scope="class", name="pme_force_fixture")
-    def test_jit_pme_force(self, water):
+    
+    # @pytest.mark.parametrize('kappa', [i/10 for i in range(1, 10)])
+    # @pytest.mark.parametrize('rc', range(1, 17))
+    # @pytest.mark.parametrize('kmax', range(10, 130, 10))
+    @pytest.fixture(scope="class", name="pme_force_fixture", params=paramizer())
+    def test_jit_pme_force(self, water, request):
 
         expected_energy = {"water1": 1234, "water2": 2345}
         (
@@ -50,11 +60,12 @@ class TestResultWithMPID:
         pScales = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0])
         dScales = jnp.array([0.0, 0.0, 0.0, 1.0, 1.0])
 
-        rc = 4  # in Angstrom
         ethresh = 1e-4
         lmax = 2
-        kappa, K1, K2, K3 = setup_ewald_parameters(rc, ethresh, box)
-        kappa = 0.657065221219616
+        # kappa, K1, K2, K3 = setup_ewald_parameters(rc, ethresh, box)
+        kappa = request.param[0]
+        rc = request.param[1] # in Angstrom
+        K1 = K2 = K3 = kmax = request.param[2]
 
         displacement_fn, shift_fn = space.periodic_general(
             box, fractional_coordinates=False
@@ -68,7 +79,8 @@ class TestResultWithMPID:
         pme_force = ADMPPmeForce(
             box, axis_types, axis_indices, covalent_map, rc, ethresh, lmax
         )
-        pme_force.update_env("kappa", 0.657065221219616)
+        # pme_force.update_env("kappa", 0.657065221219616)
+        pme_force.update_env("kappa", kappa)
 
         construct_local_frame_fn = generate_construct_local_frames(
             axis_types, axis_indices
@@ -114,7 +126,7 @@ class TestResultWithMPID:
             ene_recip = pme_recip_fn(positions, box, Q_global)
             return ene_recip
 
-        print("\n=== start jitting ===\n")
+        print(f"\n=== start jitting with {kappa=}, {rc=}, {kmax=} ===\n")
         # natrue jit
         with timer('jitting', f"water{nwater}"):
             E, F = pme_force.get_forces(
@@ -153,17 +165,18 @@ class TestResultWithMPID:
                 lmax,
             )
             E.block_until_ready()
-
+            
+        print(f"\n=== end jitting with {kappa=}, {rc=}, {kmax=}===\n")
         jitted_forces = pme_force.get_forces
         jitted_real = value_and_grad(mock_pme_real)
         jitted_self = value_and_grad(mock_pme_self)
         jitted_reci = value_and_grad(mock_pme_reci)
 
-        yield nwater, jitted_forces, jitted_real, jitted_self, jitted_reci, positions, box, pairs, Q_local, mScales, pScales, dScales, kappa, K1, K2, K3, axis_types, axis_indices, covalent_map, construct_local_frame_fn, pme_order, pme_recip_fn
+        yield nwater, kappa, rc, kmax, jitted_forces, jitted_real, jitted_self, jitted_reci, positions, box, pairs, Q_local, mScales, pScales, dScales, kappa, K1, K2, K3, axis_types, axis_indices, covalent_map, construct_local_frame_fn, pme_order, pme_recip_fn
 
     def test_jitted_pme_force(self, pme_force_fixture):
         (
-            nwater,
+            nwater, kappa, rc, kmax, 
             jitted_forces,
             jitted_real,
             jitted_self,
@@ -177,7 +190,7 @@ class TestResultWithMPID:
             dScales,
             *_
         ) = pme_force_fixture
-        with timer('compute', f"water{nwater}"):
+        with timer('compute', f"water{nwater}", kappa=kappa, rc=rc, kmax=kmax):
             E, F = jitted_forces(
                 positions, box, pairs, Q_local, mScales, pScales, dScales
             )
@@ -186,7 +199,7 @@ class TestResultWithMPID:
     def test_pme_real(self, pme_force_fixture):
 
         (
-            nwater,
+            nwater, kappa, rc, kmax, 
             jitted_forces,
             jitted_real,
             jitted_self,
@@ -200,7 +213,7 @@ class TestResultWithMPID:
             dScales,
             *_
         ) = pme_force_fixture
-        with timer('compute', f"water{nwater}"):
+        with timer('compute', f"water{nwater}", kappa=kappa, rc=rc, kmax=kmax):
             E, F = jitted_real(
                 positions, box, pairs, Q_local, mScales, pScales, dScales
             )
@@ -209,7 +222,7 @@ class TestResultWithMPID:
     def test_pme_self(self, pme_force_fixture):
 
         (
-            nwater,
+            nwater, kappa, rc, kmax, 
             jitted_forces,
             jitted_real,
             jitted_self,
@@ -224,7 +237,7 @@ class TestResultWithMPID:
             *_
         ) = pme_force_fixture
 
-        with timer('compute', f"water{nwater}"):
+        with timer('compute', f"water{nwater}", kappa=kappa, rc=rc, kmax=kmax):
             E, F = jitted_self(
                 positions, box, pairs, Q_local, mScales, pScales, dScales
             )
@@ -233,7 +246,7 @@ class TestResultWithMPID:
     def test_pme_reci(self, water, pme_force_fixture):
 
         (
-            nwater,
+            nwater, kappa, rc, kmax, 
             jitted_forces,
             jitted_real,
             jitted_self,
@@ -258,7 +271,7 @@ class TestResultWithMPID:
         ) = pme_force_fixture
 
         lmax = 2
-        with timer('compute', f"water{nwater}"):
+        with timer('compute', f"water{nwater}", kappa=kappa, rc=rc, kmax=kmax):
             E, F = jitted_reci(
                 positions,
                 box,

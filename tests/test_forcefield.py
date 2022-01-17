@@ -1,10 +1,8 @@
-
-from admp.forcefield import ForceField
+import pytest
+from openmm import app
 
 class TestForceField:
     
-    def test_load_file(self):
+    def test_init(self):
         
-        ff = ForceField(f'mpidwater.xml')
-        
-        
+        ff = app.ForceField('mpidwater.xml')

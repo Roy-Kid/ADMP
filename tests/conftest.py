@@ -2,9 +2,11 @@ from admp.parser import *
 import jax.numpy as jnp
 import pytest
 from admp.multipole import convert_cart2harm
-
+from time import time
 
 def load(pdb_file, xml_file):
+
+    start = time()
 
     pdbinfo = read_pdb(pdb_file)
     serials = pdbinfo["serials"]
@@ -55,6 +57,9 @@ def load(pdb_file, xml_file):
     covalent_map = assemble_covalent(residueDicts, n_atoms)
     Q_local = convert_cart2harm(Q, 2)
 
+    end = time()
+    print(f'{pdb_file} load time: {end-start}')
+
     return (
         serials,
         names,
@@ -70,7 +75,7 @@ def load(pdb_file, xml_file):
     )
 
 
-@pytest.fixture(scope="session", params=[1, 2, 4, 8, 256, 512, 1024], ids=lambda x: f"water{x}")
+@pytest.fixture(scope="session", params=[1], ids=lambda x: f"water{x}")
 def water(request):
     yield f"{request.param}", load(f"water{request.param}.pdb", "mpidwater.xml")
 
