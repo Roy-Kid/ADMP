@@ -132,4 +132,3 @@ if __name__ == '__main__':
     E, F = TT_damping_qq_c6(positions, box, pairs, mScales, a_list, b_list, q_list, c_list[0])
     print(E)
 
-
