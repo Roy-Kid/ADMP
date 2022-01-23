@@ -12,10 +12,14 @@ from admp.disp_pme import *
 from admp.pairwise import *
 
 
+import linecache
+def get_line_context(file_path, line_number):
+    return linecache.getline(file_path,line_number).strip()
+
 # below is the validation code
 if __name__ == '__main__':
     pdb = str(sys.argv[1])
-    xml = 'mpidwater.xml'
+    xml = str(sys.argv[2])
     pdbinfo = read_pdb(pdb)
     serials = pdbinfo['serials']
     names = pdbinfo['names']
@@ -52,6 +56,28 @@ if __name__ == '__main__':
         [atom.axis_indices for atom in atomDicts.values()]
     )
     covalent_map = assemble_covalent(residueDicts, n_atoms)
+
+    ## ind paras
+    pol = np.vstack(
+        [(atom.polarizabilityXX, atom.polarizabilityYY, atom.polarizabilityZZ) for atom in atomDicts.values()]
+    )
+    pol = jnp.array(pol.astype(np.float32))
+    pol = 1000*jnp.mean(pol,axis=1)
+
+    tholes = np.vstack(
+        [atom.thole  for atom in atomDicts.values()]
+    )
+    tholes = jnp.array(tholes.astype(np.float32))
+    tholes = jnp.mean(tholes,axis=1) 
+    defaultTholeWidth=8
+   
+    Uind_global = jnp.zeros([n_atoms,3])
+    for i in range(n_atoms):
+        a = get_line_context(sys.argv[3],i+1)
+        b = a.split()
+        t = np.array([10*float(b[0]),10*float(b[1]),10*float(b[2])])
+        Uind_global = Uind_global.at[i].set(t)    
+
 
     
     lmax = 2
@@ -106,29 +132,12 @@ if __name__ == '__main__':
     pairs = nbr.idx.T
 
     # electrostatic
-    pme_force = ADMPPmeForce(box, axis_type, axis_indices, covalent_map, rc, ethresh, lmax)
+    pme_force = ADMPPmeForce(box, axis_type, axis_indices, covalent_map, rc, ethresh, lmax, lpol=True)
     pme_force.update_env('kappa', 0.657065221219616)
-    E, F = pme_force.get_forces(positions, box, pairs, Q_local, mScales)
+    E, F = pme_force.get_forces(positions, box, pairs, Q_local, Uind_global, pol, tholes, mScales, pScales, dScales)
     print('Electrostatic Energy (kJ/mol)')
     # E = pme_force.get_energy(positions, box, pairs, Q_local, mScales, pScales, dScales)
-    E, F = pme_force.get_forces(positions, box, pairs, Q_local, mScales)
+    E, F = pme_force.get_forces(positions, box, pairs, Q_local, Uind_global, pol, tholes, mScales, pScales, dScales)
     print(E)
 
-
-    # dispersion
-    disp_pme_force = ADMPDispPmeForce(box, covalent_map, rc, ethresh, pmax)
-    disp_pme_force.update_env('kappa', 0.657065221219616)
-    E, F = disp_pme_force.get_forces(positions, box, pairs, c_list.T, mScales)
-    print('Dispersion Energy (kJ/mol)')
-    # E = disp_pme_force.get_energy(positions, box, pairs, c_list.T, mScales)
-    E, F = disp_pme_force.get_forces(positions, box, pairs, c_list.T, mScales)
-    print(E)
-   
-
-    # short range damping
-    TT_damping_qq_c6 = value_and_grad(generate_pairwise_interaction(TT_damping_qq_c6_kernel, covalent_map, static_args={}))
-    TT_damping_qq_c6(positions, box, pairs, mScales, a_list, b_list, q_list, c_list[0])
-    print('Tang-Tonnies Damping (kJ/mol)')
-    E, F = TT_damping_qq_c6(positions, box, pairs, mScales, a_list, b_list, q_list, c_list[0])
-    print(E)
 
