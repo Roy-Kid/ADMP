@@ -1,21 +1,25 @@
 #!/usr/bin/env python
 import sys
 import numpy as np
+import jax
 import jax.numpy as jnp
 from jax import grad, value_and_grad, vmap, jit
 from jax.scipy.special import erf
-from admp.settings import *
-from admp.multipole import *
-from admp.spatial import *
+import admp.settings
+from admp.settings import DO_JIT, jit_condition, POL_CONV, MAX_N_POL
+from admp.multipole import C1_c2h, convert_cart2harm
+from admp.multipole import rot_ind_global2local, rot_global2local, rot_local2global
+from admp.spatial import v_pbc_shift, generate_construct_local_frames, build_quasi_internal
+from functools import partial
 
 DIELECTRIC = 1389.35455846
 DEFAULT_THOLE_WIDTH = 0.3
 
-from admp.recip import *
+from admp.recip import generate_pme_recip, Ck_1
 
 # for debugging use only
-from jax_md import partition, space
-from admp.parser import *
+# from jax_md import partition, space
+# from admp.parser import *
 
 # from jax.config import config
 # config.update("jax_enable_x64", True)
@@ -43,6 +47,7 @@ class ADMPPmeForce:
         self.pme_order = 6
         self.covalent_map = covalent_map
         self.lpol = lpol
+        self.n_atoms = len(axis_type)
 
         # setup calculators
         self.refresh_calculators()
@@ -58,14 +63,26 @@ class ADMPPmeForce:
                                  mScales, None, None, self.covalent_map,
                                  self.construct_local_frames, self.pme_recip,
                                  self.kappa, self.K1, self.K2, self.K3, self.lmax, False)
+            return get_energy
         else:
-            def get_energy(positions, box, pairs, Q_local, Uind_global, pol, tholes, mScales, pScales, dScales):
+            # this is the bare energy calculator, with Uind as explicit input
+            def energy_fn(positions, box, pairs, Q_local, Uind_global, pol, tholes, mScales, pScales, dScales):
                 return energy_pme(positions, box, pairs,
                                  Q_local, Uind_global, pol, tholes,
                                  mScales, pScales, dScales, self.covalent_map,
                                  self.construct_local_frames, self.pme_recip,
                                  self.kappa, self.K1, self.K2, self.K3, self.lmax, True)
-        return get_energy
+            self.energy_fn = energy_fn
+            self.grad_U_fn = grad(self.energy_fn, argnums=(4))
+            self.grad_pos_fn = grad(self.energy_fn, argnums=(0))
+            self.U_ind = jnp.zeros((self.n_atoms, 3))
+            # this is the wrapper that include a Uind optimizer
+            def get_energy(positions, box, pairs, Q_local, pol, tholes, mScales, pScales, dScales, U_init=self.U_ind):
+                self.U_ind, self.lconverg, n_cycle = self.optimize_Uind(positions, box, pairs, Q_local, pol, tholes, mScales, pScales, dScales, U_init=U_init)
+                # here we rely on Feynman-Hellman theorem, drop the term dV/dU*dU/dr !
+                # self.U_ind = jax.lax.stop_gradient(U_ind)
+                return self.energy_fn(positions, box, pairs, Q_local, self.U_ind, pol, tholes, mScales, pScales, dScales)
+            return get_energy
 
 
     def update_env(self, attr, val):
@@ -86,6 +103,41 @@ class ADMPPmeForce:
         self.get_energy = self.generate_get_energy()
         self.get_forces = value_and_grad(self.get_energy)
         return
+
+
+    def optimize_Uind(self, positions, box, pairs, Q_local, pol, tholes, mScales, pScales, dScales, U_init=None, maxiter=MAX_N_POL, thresh=POL_CONV):
+        '''
+        This function converges the induced dipole
+        Note that we cut all the gradient chain passing through this function as we assume Feynman-Hellman theorem
+        Gradients related to Uind should be dropped
+        '''
+        # Do not track gradient in Uind optimization
+        positions = jax.lax.stop_gradient(positions)
+        box = jax.lax.stop_gradient(box)
+        Q_local = jax.lax.stop_gradient(Q_local)
+        pol = jax.lax.stop_gradient(pol)
+        tholes = jax.lax.stop_gradient(tholes)
+        mScales = jax.lax.stop_gradient(mScales)
+        pScales = jax.lax.stop_gradient(pScales)
+        dScales = jax.lax.stop_gradient(dScales)
+        if U_init is None:
+            U = jnp.zeros((self.n_atoms, 3))
+        else:
+            U = U_init
+        site_filter = (pol>0.001) # focus on the actual polarizable sites
+
+        for i in range(maxiter):
+            field = self.grad_U_fn(positions, box, pairs, Q_local, U, pol, tholes, mScales, pScales, dScales)
+            E = self.energy_fn(positions, box, pairs, Q_local, U, pol, tholes, mScales, pScales, dScales)
+            # print(i, E, jnp.max(jnp.abs(field[site_filter])))
+            if jnp.max(jnp.abs(field[site_filter])) < thresh:
+                break
+            U = U - field * pol[:, jnp.newaxis] / DIELECTRIC
+        if i == maxiter-1:
+            flag = False
+        else: # converged
+            flag = True
+        return U, flag, i
 
 
 def setup_ewald_parameters(rc, ethresh, box):

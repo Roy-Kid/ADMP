@@ -3,7 +3,8 @@ import sys
 import numpy as np
 import jax.numpy as jnp
 from jax import vmap
-from admp.settings import *
+import admp.settings
+from admp.settings import DO_JIT, jit_condition
 from functools import partial
 
 # This module deals with the transformations and rotations of multipoles

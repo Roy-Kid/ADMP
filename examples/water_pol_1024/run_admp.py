@@ -4,12 +4,10 @@ import numpy as np
 import jax.numpy as jnp
 from jax import grad, value_and_grad
 from jax_md import partition, space
-from admp.settings import *
-from admp.multipole import *
+import admp.settings
+from admp.multipole import convert_cart2harm
+from admp.pme import ADMPPmeForce
 from admp.parser import *
-from admp.pme import *
-from admp.disp_pme import *
-from admp.pairwise import *
 
 
 import linecache
@@ -18,8 +16,9 @@ def get_line_context(file_path, line_number):
 
 # below is the validation code
 if __name__ == '__main__':
-    pdb = str(sys.argv[1])
-    xml = str(sys.argv[2])
+    pdb = str('water1024.pdb')
+    xml = str('mpidwater.xml')
+    ref_dip = str('dipole_1024')
     pdbinfo = read_pdb(pdb)
     serials = pdbinfo['serials']
     names = pdbinfo['names']
@@ -73,7 +72,7 @@ if __name__ == '__main__':
    
     Uind_global = jnp.zeros([n_atoms,3])
     for i in range(n_atoms):
-        a = get_line_context(sys.argv[3],i+1)
+        a = get_line_context(ref_dip,i+1)
         b = a.split()
         t = np.array([10*float(b[0]),10*float(b[1]),10*float(b[2])])
         Uind_global = Uind_global.at[i].set(t)    
@@ -94,7 +93,7 @@ if __name__ == '__main__':
         b = i*3+1
         c = i*3+2
         # dispersion coeff
-        c_list[0][a]=37.199677405
+        c_list[0][a]=37.19677405
         c_list[0][b]=7.6111103
         c_list[0][c]=7.6111103
         c_list[1][a]=85.26810658
@@ -134,10 +133,14 @@ if __name__ == '__main__':
     # electrostatic
     pme_force = ADMPPmeForce(box, axis_type, axis_indices, covalent_map, rc, ethresh, lmax, lpol=True)
     pme_force.update_env('kappa', 0.657065221219616)
-    E, F = pme_force.get_forces(positions, box, pairs, Q_local, Uind_global, pol, tholes, mScales, pScales, dScales)
-    print('Electrostatic Energy (kJ/mol)')
+    E, F = pme_force.get_forces(positions, box, pairs, Q_local, pol, tholes, mScales, pScales, dScales)
+    print('# Electrostatic Energy (kJ/mol)')
     # E = pme_force.get_energy(positions, box, pairs, Q_local, mScales, pScales, dScales)
-    E, F = pme_force.get_forces(positions, box, pairs, Q_local, Uind_global, pol, tholes, mScales, pScales, dScales)
-    print(E)
+    E, F = pme_force.get_forces(positions, box, pairs, Q_local, pol, tholes, mScales, pScales, dScales, U_init=pme_force.U_ind)
 
+    U_ind = pme_force.U_ind
+    # compare U_ind with reference
+    for i in range(1024):
+        for j in range(3):
+            print(Uind_global[i*3, j], Uind_global[i*3, j], U_ind[i*3, j])
 

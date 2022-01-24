@@ -2,8 +2,10 @@
 import sys
 import jax
 from jax import vmap
-from admp.settings import *
-from admp.spatial import *
+import jax.numpy as jnp
+import admp.settings
+from admp.settings import DO_JIT, jit_condition
+from admp.spatial import pbc_shift, v_pbc_shift
 
 # for debug
 # from jax_md import partition, space

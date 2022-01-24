@@ -4,17 +4,23 @@ import numpy as np
 import jax.numpy as jnp
 from jax import grad, value_and_grad
 from jax_md import partition, space
-from admp.settings import *
-from admp.multipole import *
+# from admp.settings import *
+# from admp.multipole import *
+# from admp.parser import *
+# from admp.pme import *
+# from admp.disp_pme import *
+# from admp.pairwise import *
+import admp.settings
+from admp.multipole import convert_cart2harm
+from admp.pme import ADMPPmeForce
+from admp.disp_pme import ADMPDispPmeForce
+from admp.pairwise import generate_pairwise_interaction, TT_damping_qq_c6_kernel
 from admp.parser import *
-from admp.pme import *
-from admp.disp_pme import *
-from admp.pairwise import *
 
 
 # below is the validation code
 if __name__ == '__main__':
-    pdb = str(sys.argv[1])
+    pdb = 'water1024.pdb'
     xml = 'mpidwater.xml'
     pdbinfo = read_pdb(pdb)
     serials = pdbinfo['serials']
@@ -68,7 +74,7 @@ if __name__ == '__main__':
         b = i*3+1
         c = i*3+2
         # dispersion coeff
-        c_list[0][a]=37.199677405
+        c_list[0][a]=37.19677405
         c_list[0][b]=7.6111103
         c_list[0][c]=7.6111103
         c_list[1][a]=85.26810658

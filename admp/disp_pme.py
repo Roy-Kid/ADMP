@@ -1,10 +1,13 @@
 #!/usr/bin/env python
 import jax
+import jax.numpy as jnp
 from jax import vmap, value_and_grad
-from admp.settings import *
-from admp.spatial import *
+import admp.settings
+from admp.settings import DO_JIT, jit_condition
+from admp.spatial import pbc_shift, v_pbc_shift
 from admp.pme import setup_ewald_parameters
-from admp.recip import *
+from admp.recip import generate_pme_recip, Ck_6, Ck_8, Ck_10
+from functools import partial
 
 # debug
 # from jax_md import partition, space
@@ -340,6 +343,7 @@ def validation(pdb):
     disp_pme_force = ADMPDispPmeForce(box, covalent_map, rc, ethresh, pmax)
     disp_pme_force.update_env('kappa', 0.657065221219616)
 
+    print(c_list[:4])
     E, F = disp_pme_force.get_forces(positions, box, pairs, c_list, mScales)
     print('ok')
     E, F = disp_pme_force.get_forces(positions, box, pairs, c_list, mScales)
