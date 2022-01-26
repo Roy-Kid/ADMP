@@ -7,6 +7,7 @@ from admp.settings import DO_JIT, jit_condition
 from admp.spatial import pbc_shift, v_pbc_shift
 from admp.pme import setup_ewald_parameters
 from admp.recip import generate_pme_recip, Ck_6, Ck_8, Ck_10
+from admp.pairwise import distribute_scalar, distribute_v3, distribute_dispcoeff
 from functools import partial
 
 # debug
@@ -156,13 +157,19 @@ def disp_pme_real(positions, box, pairs,
     pairs = pairs[pairs[:, 0] < pairs[:, 1]]
 
     box_inv = jnp.linalg.inv(box)
-    ri = positions[pairs[:, 0]]
-    rj = positions[pairs[:, 1]]
-    nbonds = covalent_map[pairs[:, 0], pairs[:, 1]]
-    mscales = mScales[nbonds-1]
 
-    ci = c_list[pairs[:, 0], :]
-    cj = c_list[pairs[:, 1], :]
+    ri = distribute_v3(positions, pairs[:, 0])
+    rj = distribute_v3(positions, pairs[:, 1])
+    # ri = positions[pairs[:, 0]]
+    # rj = positions[pairs[:, 1]]
+    nbonds = covalent_map[pairs[:, 0], pairs[:, 1]]
+    mscales = distribute_scalar(mScales, nbonds-1)
+    # mscales = mScales[nbonds-1]
+
+    ci = distribute_dispcoeff(c_list, pairs[:, 0])
+    cj = distribute_dispcoeff(c_list, pairs[:, 1])
+    # ci = c_list[pairs[:, 0], :]
+    # cj = c_list[pairs[:, 1], :]
 
     ene_real = jnp.sum(disp_pme_real_kernel(ri, rj, ci, cj, box, box_inv, mscales, kappa, pmax))
 

@@ -10,6 +10,7 @@ from admp.settings import DO_JIT, jit_condition, POL_CONV, MAX_N_POL
 from admp.multipole import C1_c2h, convert_cart2harm
 from admp.multipole import rot_ind_global2local, rot_global2local, rot_local2global
 from admp.spatial import v_pbc_shift, generate_construct_local_frames, build_quasi_internal
+from admp.pairwise import distribute_scalar, distribute_v3, distribute_multipoles
 from functools import partial
 
 DIELECTRIC = 1389.35455846
@@ -655,21 +656,35 @@ def pme_real(positions, box, pairs,
     # expand pairwise parameters, from atomic parameters
     pairs = pairs[pairs[:, 0] < pairs[:, 1]]
     box_inv = jnp.linalg.inv(box)
-    r1 = positions[pairs[:, 0]]
-    r2 = positions[pairs[:, 1]]
-    Q_extendi = Q_global[pairs[:, 0]]
-    Q_extendj = Q_global[pairs[:, 1]]
+    r1 = distribute_v3(positions, pairs[:, 0])
+    r2 = distribute_v3(positions, pairs[:, 1])
+    # r1 = positions[pairs[:, 0]]
+    # r2 = positions[pairs[:, 1]]
+    Q_extendi = distribute_multipoles(Q_global, pairs[:, 0])
+    Q_extendj = distribute_multipoles(Q_global, pairs[:, 1])
+    # Q_extendi = Q_global[pairs[:, 0]]
+    # Q_extendj = Q_global[pairs[:, 1]]
     nbonds = covalent_map[pairs[:, 0], pairs[:, 1]]
-    mscales = mScales[nbonds-1]
+    indices = nbonds-1
+    mscales = distribute_scalar(mScales, indices)
+    # mscales = mScales[nbonds-1]
     if lpol:
-        pol1 = pol[pairs[:,0]]
-        pol2 = pol[pairs[:,1]]
-        thole1 = tholes[pairs[:,0]]
-        thole2 = tholes[pairs[:,1]]
-        Uind_extendi = Uind_global[pairs[:, 0]]
-        Uind_extendj = Uind_global[pairs[:, 1]]
-        pscales = pScales[nbonds-1]
-        dscales = dScales[nbonds-1]
+        pol1 = distribute_scalar(pol, pairs[:, 0])
+        pol2 = distribute_scalar(pol, pairs[:, 1])
+        thole1 = distribute_scalar(tholes, pairs[:, 0])
+        thole2 = distribute_scalar(tholes, pairs[:, 1])
+        Uind_extendi = distribute_v3(Uind_global, pairs[:, 0])
+        Uind_extendj = distribute_v3(Uind_global, pairs[:, 1])
+        pscales = distribute_scalar(pScales, indices)
+        dscales = distribute_scalar(dScales, indices)
+        # pol1 = pol[pairs[:,0]]
+        # pol2 = pol[pairs[:,1]]
+        # thole1 = tholes[pairs[:,0]]
+        # thole2 = tholes[pairs[:,1]]
+        # Uind_extendi = Uind_global[pairs[:, 0]]
+        # Uind_extendj = Uind_global[pairs[:, 1]]
+        # pscales = pScales[nbonds-1]
+        # dscales = dScales[nbonds-1]
         dmp = get_pair_dmp(pol1, pol2)
     else:
         Uind_extendi = None

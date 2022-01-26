@@ -5,7 +5,8 @@ from jax import vmap
 import jax.numpy as jnp
 import admp.settings
 from admp.settings import DO_JIT, jit_condition
-from admp.spatial import pbc_shift, v_pbc_shift
+from admp.spatial import v_pbc_shift
+from functools import partial
 
 # for debug
 # from jax_md import partition, space
@@ -13,6 +14,32 @@ from admp.spatial import pbc_shift, v_pbc_shift
 # from admp.multipole import *
 # from jax import grad, value_and_grad
 # from admp.pme import *
+
+# jitted and vmapped parameter distributors
+# all three look identical, but they assume different input shapes
+# you should use different functions for different inputs, to avoid recompiling
+@partial(vmap, in_axes=(None, 0), out_axes=(0))
+@jit_condition(static_argnums=())
+def distribute_scalar(params, index):
+    return params[index]
+
+
+@partial(vmap, in_axes=(None, 0), out_axes=(0))
+@jit_condition(static_argnums=())
+def distribute_v3(pos, index):
+    return pos[index]
+
+
+@partial(vmap, in_axes=(None, 0), out_axes=(0))
+@jit_condition(static_argnums=())
+def distribute_multipoles(multipoles, index):
+    return multipoles[index]
+
+
+@partial(vmap, in_axes=(None, 0), out_axes=(0))
+@jit_condition(static_argnums=())
+def distribute_dispcoeff(c_list, index):
+    return c_list[index]
 
 
 def generate_pairwise_interaction(pair_int_kernel, covalent_map, static_args):
@@ -39,19 +66,24 @@ def generate_pairwise_interaction(pair_int_kernel, covalent_map, static_args):
 
     def pair_int(positions, box, pairs, mScales, *atomic_params):
         pairs =  pairs[pairs[:, 0] < pairs[:, 1]]
-        ri = positions[pairs[:, 0]]
-        rj = positions[pairs[:, 1]]
+        ri = distribute_v3(positions, pairs[:, 0])
+        rj = distribute_v3(positions, pairs[:, 1])
+        # ri = positions[pairs[:, 0]]
+        # rj = positions[pairs[:, 1]]
         nbonds = covalent_map[pairs[:, 0], pairs[:, 1]]
-        mscales = mScales[nbonds-1]
+        mscales = distribute_scalar(mScales, nbonds-1)
+        # mscales = mScales[nbonds-1]
         box_inv = jnp.linalg.inv(box)
         dr = ri - rj
-        dr = pbc_shift(dr, box, box_inv)
+        dr = v_pbc_shift(dr, box, box_inv)
         dr = jnp.linalg.norm(dr, axis=1)
 
         pair_params = []
         for i, param in enumerate(atomic_params):
-            pair_params.append(param[pairs[:, 0]])
-            pair_params.append(param[pairs[:, 1]])
+            pair_params.append(distribute_scalar(param, pairs[:, 0]))
+            pair_params.append(distribute_scalar(param, pairs[:, 1]))
+            # pair_params.append(param[pairs[:, 0]])
+            # pair_params.append(param[pairs[:, 1]])
 
         energy = jnp.sum(pair_int_kernel(dr, mscales, *pair_params))
         return energy
