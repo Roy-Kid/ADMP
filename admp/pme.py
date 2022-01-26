@@ -48,7 +48,7 @@ class ADMPPmeForce:
         self.pme_order = 6
         self.covalent_map = covalent_map
         self.lpol = lpol
-        self.n_atoms = len(axis_type)
+        self.n_atoms = int(covalent_map.shape[0]) # len(axis_type)
 
         # setup calculators
         self.refresh_calculators()
@@ -79,7 +79,7 @@ class ADMPPmeForce:
             self.U_ind = jnp.zeros((self.n_atoms, 3))
             # this is the wrapper that include a Uind optimizer
             def get_energy(positions, box, pairs, Q_local, pol, tholes, mScales, pScales, dScales, U_init=self.U_ind):
-                self.U_ind, self.lconverg, n_cycle = self.optimize_Uind(positions, box, pairs, Q_local, pol, tholes, mScales, pScales, dScales, U_init=U_init)
+                self.U_ind, self.lconverg, self.n_cycle = self.optimize_Uind(positions, box, pairs, Q_local, pol, tholes, mScales, pScales, dScales, U_init=U_init)
                 # here we rely on Feynman-Hellman theorem, drop the term dV/dU*dU/dr !
                 # self.U_ind = jax.lax.stop_gradient(U_ind)
                 return self.energy_fn(positions, box, pairs, Q_local, self.U_ind, pol, tholes, mScales, pScales, dScales)
@@ -98,7 +98,10 @@ class ADMPPmeForce:
         '''
         refresh the energy and force calculators according to the current environment
         '''
-        self.construct_local_frames = generate_construct_local_frames(self.axis_type, self.axis_indices)
+        if self.lmax > 0:
+            self.construct_local_frames = generate_construct_local_frames(self.axis_type, self.axis_indices)
+        else:
+            self.construct_local_frames = None
         self.pme_recip = generate_pme_recip(Ck_1, self.kappa, False, self.pme_order, self.K1, self.K2, self.K3, self.lmax)
         # generate the force calculator
         self.get_energy = self.generate_get_energy()
@@ -214,8 +217,18 @@ def energy_pme(positions, box, pairs,
     Output:
         energy: total pme energy
     '''
-    local_frames = construct_local_frame_fn(positions, box)
-    Q_global = rot_local2global(Q_local, local_frames, lmax)
+    # if doing a multipolar calculation
+    if lmax > 0:
+        local_frames = construct_local_frame_fn(positions, box)
+        Q_global = rot_local2global(Q_local, local_frames, lmax)
+    else:
+        if lpol:
+            # if fixed multipole only contains charge, and it's polarizable, then expand Q matrix
+            dips = jnp.zeros((Q_local.shape[0], 3))
+            Q_global = jnp.hstack((Q_global, dips))
+            lmax = 1
+        else:
+            Q_global = Q_local
 
     # note we assume when lpol is True, lmax should be >= 1
     if lpol:
@@ -296,6 +309,7 @@ def calc_e_perm(dr, mscales, kappa, lmax=2):
         dd_m0 = -2/3 * rInvVec[3] * (3*(mscales + bVec[3]) + alphaRVec[3]*X)
         dd_m1 = rInvVec[3] * (mscales + bVec[3] - (2/3)*alphaRVec[3]*X)
     else:
+        cd = 0
         dd_m0 = 0
         dd_m1 = 0
 
@@ -316,6 +330,7 @@ def calc_e_perm(dr, mscales, kappa, lmax=2):
         qq_m0 = 0
         qq_m1 = 0
         qq_m1 = 0
+        qq_m2 = 0
 
     return cc, cd, dd_m0, dd_m1, cq, dq_m0, dq_m1, qq_m0, qq_m1, qq_m2
 
