@@ -1,9 +1,10 @@
 #!/usr/bin/env python
 import jax.numpy as jnp
-from jax import vmap
+from jax import vmap, jit
 import numpy as np
 from functools import partial
-from admp.settings import *
+import admp.settings
+from admp.settings import DO_JIT, jit_condition
 
 # This module deals with spatial geometric operations, mainly including:
 # 1. PBC related operations

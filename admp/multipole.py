@@ -3,7 +3,8 @@ import sys
 import numpy as np
 import jax.numpy as jnp
 from jax import vmap
-from admp.settings import *
+import admp.settings
+from admp.settings import DO_JIT, jit_condition
 from functools import partial
 
 # This module deals with the transformations and rotations of multipoles
@@ -76,6 +77,18 @@ def convert_cart2harm(Theta, lmax):
     return Q
 
 
+@partial(vmap, in_axes=(0, 0), out_axes=0)
+@jit_condition(static_argnums=())
+def rot_ind_global2local(U_g, localframes):
+    '''
+    A special rotation function for just dipoles, aim for applying on induced dipoles
+    '''
+    zxy = jnp.array([2,0,1])
+    R1 = localframes[zxy][:,zxy]
+    U_l = jnp.dot(R1, U_g)
+    return U_l
+
+
 @partial(vmap, in_axes=(0, 0, None), out_axes=0)
 @jit_condition(static_argnums=(2))
 def rot_global2local(Q_gh, localframes, lmax=2):
@@ -106,7 +119,7 @@ def rot_global2local(Q_gh, localframes, lmax=2):
         # the rotation matrix
         R1 = localframes[zxy][:,zxy]
         # rotate
-        Q_lh_1 = jnp.sum(R1*Q_gh[jnp.newaxis,1:4], axis=1)
+        Q_lh_1 = jnp.dot(R1, Q_gh[1:4])
     if lmax >= 2:
         xx = localframes[0, 0]
         xy = localframes[0, 1]

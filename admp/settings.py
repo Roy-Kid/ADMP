@@ -2,7 +2,7 @@
 from jax import jit
 from jax.config import config
 
-PRECISION = 'single' #  'double'
+PRECISION = 'single'  # 'double'
 
 DO_JIT = True
 
@@ -24,3 +24,7 @@ def jit_condition(*args, **kwargs):
 #             return func
 #         return dec(func)
 #     return decorator
+
+# DEFAULT THRESHOLDS
+POL_CONV = 10.0 # gradient convergence thresh for induced dipoles
+MAX_N_POL = 30  # maximum number of cyles for optimizing induced dipole

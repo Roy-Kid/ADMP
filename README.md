@@ -54,11 +54,14 @@ In `admp/settings.py`, you can modify some global settings, including:
 
 ## Example
 
-We provide a MPID water box example. So far polarizable potential is still under development, this simply computes nonpolarizable multipolar potential.
+We provide a MPID 1024 water box example. In water_1024 and water_pol_1024, we show both the nonpolarizable and the polarizable cases.
 
 ```bash
 cd ./examples/water_1024
-./run_admp.py water1024.pdb
+./run_admp.py
+
+cd ./examples/water_pol_1024
+./run_admp.py
 ```
 
 if `DO_JIT = True`, then the first run would be a bit slow, since it tries to do the jit compilation. Further executions of `get_forces` or `get_energy` should be much faster.
