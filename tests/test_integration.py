@@ -32,9 +32,6 @@ def paramizer():
 
 class TestResultWithMPID:
     
-    # @pytest.mark.parametrize('kappa', [i/10 for i in range(1, 10)])
-    # @pytest.mark.parametrize('rc', range(1, 17))
-    # @pytest.mark.parametrize('kmax', range(10, 130, 10))
     @pytest.fixture(scope="class", name="pme_force_fixture", params=paramizer())
     def test_jit_pme_force(self, water, request):
 

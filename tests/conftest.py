@@ -1,8 +1,13 @@
+from admp.api import Hamiltonian
 from admp.parser import *
 import jax.numpy as jnp
 import pytest
 from admp.multipole import convert_cart2harm
 from time import time
+import openmm
+import openmm.app as app
+import openmm.unit as unit
+from jax_md import space, partition
 
 def load(pdb_file, xml_file):
 
@@ -57,9 +62,6 @@ def load(pdb_file, xml_file):
     covalent_map = assemble_covalent(residueDicts, n_atoms)
     Q_local = convert_cart2harm(Q, 2)
 
-    end = time()
-    print(f'{pdb_file} load time: {end-start}')
-
     return (
         serials,
         names,
@@ -68,6 +70,7 @@ def load(pdb_file, xml_file):
         positions,
         box,
         charges,
+        Q,
         Q_local,
         axis_type,
         axis_indices,
@@ -75,7 +78,40 @@ def load(pdb_file, xml_file):
     )
 
 
-@pytest.fixture(scope="session", params=[1], ids=lambda x: f"water{x}")
+@pytest.fixture(scope="session", params=[1024], ids=lambda x: f"water{x}")
 def water(request):
     yield f"{request.param}", load(f"water{request.param}.pdb", "mpidwater.xml")
 
+# def openmmLoad(pdb_file, xml_file, residue_file):
+    
+#     H = Hamiltonian(xml_file)
+    
+#     generators = H.getGenerators()
+#     app.Topology.loadBondDefinitions(residue_file)
+#     pdb = app.PDBFile(pdb_file)
+#     rc = 4.0
+#     potentials = H.createPotential(pdb.topology, nonbondedCutoff=rc*unit.angstrom)
+#     pot_disp = potentials[0]
+#     pot_pme = potentials[1]
+
+#     positions = jnp.array(pdb.positions._value) * 10
+#     a, b, c = pdb.topology.getPeriodicBoxVectors()
+#     box = jnp.array([a._value, b._value, c._value]) * 10        
+#     mScales = generators[0].params['mScales']
+#     displacement_fn, shift_fn = space.periodic_general(
+#         box, fractional_coordinates=False
+#     )
+#     neighbor_list_fn = partition.neighbor_list(
+#         displacement_fn, box, rc, 0, format=partition.OrderedSparse
+#     )
+#     nbr = neighbor_list_fn.allocate(positions)
+#     pairs = nbr.idx.T
+#     # positions, box, pairs, Q_local, mScales
+#     E_, F_ = pot_pme(positions, box, pairs, generators[1].params)
+
+#     # E, F = pme_force.get_forces(positions, box, pairs, generators[1].params['Q_local'], generators[1].params['mScales'])
+#     return H, pdb
+
+# @pytest.fixture(scope='session')
+# def waterFromOpenMM():
+#     return openmmLoad('water1024.pdb', 'mpidwater.xml', 'residue.xml')

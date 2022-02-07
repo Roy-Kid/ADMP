@@ -12,6 +12,7 @@ from jax import grad
 
 
 if __name__ == '__main__':
+    
     H = Hamiltonian('forcefield.xml')
     app.Topology.loadBondDefinitions("residues.xml")
     pdb = app.PDBFile("water1024.pdb")
@@ -19,8 +20,9 @@ if __name__ == '__main__':
     potentials = H.createPotential(pdb.topology, nonbondedCutoff=rc*unit.angstrom)
     # generator stores all force field parameters
     # pot_fn is the actual energy calculator
-    generator = H.getGenerators()[0]
-    pot_fn = potentials[0]
+    generator = H.getGenerators()
+    pot_disp = potentials[0]
+    pot_pme = potentials[1]
 
     # construct inputs
     positions = jnp.array(pdb.positions._value) * 10
@@ -32,6 +34,9 @@ if __name__ == '__main__':
     nbr = neighbor_list_fn.allocate(positions)
     pairs = nbr.idx.T
 
-    print(pot_fn(positions, box, pairs, generator.params))
-    param_grad = grad(pot_fn, argnums=3)(positions, box, pairs, generator.params)
+    print(pot_disp(positions, box, pairs, generator[0].params))
+    param_grad = grad(pot_disp, argnums=3)(positions, box, pairs, generator[0].params)
     print(param_grad['mScales'])
+    
+    E, F = pot_pme(positions, box, pairs, generator[1].params)
+    
