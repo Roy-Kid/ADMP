@@ -285,7 +285,25 @@ class ADMPPmeGenerator:
         for i in range(n_atoms):
             atype = data.atomType[data.atoms[i]]
             map_atomtype[i] = np.where(self.types == atype)[0][0]
+        
+        # map atom multipole moments
+        q = self.params
+        Q = np.zeros((n_atoms, 10))
+        Q[:, 0] = q["c0"][map_atomtype]
+        Q[:, 1] = q["dX"][map_atomtype] * 10
+        Q[:, 2] = q["dY"][map_atomtype] * 10
+        Q[:, 3] = q["dZ"][map_atomtype] * 10
+        Q[:, 4] = q["qXX"][map_atomtype] * 300
+        Q[:, 5] = q["qYY"][map_atomtype] * 300
+        Q[:, 6] = q["qZZ"][map_atomtype] * 300
+        Q[:, 7] = q["qXY"][map_atomtype] * 300
+        Q[:, 8] = q["qXZ"][map_atomtype] * 300
+        Q[:, 9] = q["qYZ"][map_atomtype] * 300
 
+        Q = jnp.array(Q)
+        self.params["Q"] = Q
+        Q_local = convert_cart2harm(Q, 2)
+        self.params["Q_local"] = Q_local
         # here box is only used to setup ewald parameters, no need to be differentiable
         a, b, c = system.getDefaultPeriodicBoxVectors()
         box = jnp.array([a._value, b._value, c._value]) * 10
@@ -331,25 +349,10 @@ class ADMPPmeGenerator:
         def potential_fn(positions, box, pairs, params):
 
             mScales = params["mScales"]
-            q = params
-            Q = np.zeros((n_atoms, 10))
-            Q[:, 0] = q["c0"][map_atomtype]
-            Q[:, 1] = q["dX"][map_atomtype] * 10
-            Q[:, 2] = q["dY"][map_atomtype] * 10
-            Q[:, 3] = q["dZ"][map_atomtype] * 10
-            Q[:, 4] = q["qXX"][map_atomtype] * 300
-            Q[:, 5] = q["qYY"][map_atomtype] * 300
-            Q[:, 6] = q["qZZ"][map_atomtype] * 300
-            Q[:, 7] = q["qXY"][map_atomtype] * 300
-            Q[:, 8] = q["qXZ"][map_atomtype] * 300
-            Q[:, 9] = q["qYZ"][map_atomtype] * 300
+            Q_local = params["Q_local"]
 
-            Q = jnp.array(Q)
-            params["Q"] = Q
-            Q_local = convert_cart2harm(Q, 2)
-            params["Q_local"] = Q_local
             # return positions, box, pairs, Q_local, mScales
-            return pme_force.get_forces(positions, box, pairs, Q_local, mScales)
+            return pme_force.get_energy(positions, box, pairs, Q_local, mScales)
 
         self._jaxPotential = potential_fn
 

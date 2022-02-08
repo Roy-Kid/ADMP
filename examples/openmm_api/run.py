@@ -38,5 +38,8 @@ if __name__ == '__main__':
     param_grad = grad(pot_disp, argnums=3)(positions, box, pairs, generator[0].params)
     print(param_grad['mScales'])
     
-    E, F = pot_pme(positions, box, pairs, generator[1].params)
+    print(pot_pme(positions, box, pairs, generator[1].params))
+    param_grad = grad(pot_pme, argnums=3)(positions, box, pairs, generator[1].params)
+    print(param_grad['mScales'])
+
     
