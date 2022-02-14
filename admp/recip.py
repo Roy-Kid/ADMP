@@ -232,7 +232,7 @@ def generate_pme_recip(Ck_fn, kappa, gamma, pme_order, K1, K2, K3, lmax):
                     evaluated at 6*6*6 integer points about reference points m_u0 
             '''
             
-            n_harm = (lmax + 1)**2
+            n_harm = int((lmax + 1)**2)
         
             N_a = u0.shape[0]
             # mesh points around each site

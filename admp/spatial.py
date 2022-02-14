@@ -72,7 +72,7 @@ def generate_construct_local_frames(axis_types, axis_indices):
     Bisector_filter = (axis_types == Bisector)
     ZBisect_filter = (axis_types == ZBisect)
     ThreeFold_filter = (axis_types == ThreeFold)
-   
+    
     def construct_local_frames(positions, box):
         '''
         This function constructs the local frames for each site
@@ -82,6 +82,8 @@ def generate_construct_local_frames(axis_types, axis_indices):
                 N * 3: the positions matrix
             box:
         Outputs:
+            #jichen:
+            #NOTE: It doesn't seem to return Q
             Q: 
                 N*(lmax+1)^2, the multipole moments in global harmonics.
             local_frames:
@@ -143,7 +145,6 @@ def generate_construct_local_frames(axis_types, axis_indices):
         return jit(construct_local_frames)
     else:
         return construct_local_frames
-
 
 @partial(vmap, in_axes=(0, 0, 0, 0), out_axes=0)
 @jit_condition(static_argnums=())

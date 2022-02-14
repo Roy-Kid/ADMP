@@ -108,7 +108,6 @@ class ADMPPmeForce:
         self.get_forces = value_and_grad(self.get_energy)
         return
 
-
     def optimize_Uind(self, positions, box, pairs, Q_local, pol, tholes, mScales, pScales, dScales, U_init=None, maxiter=MAX_N_POL, thresh=POL_CONV):
         '''
         This function converges the induced dipole

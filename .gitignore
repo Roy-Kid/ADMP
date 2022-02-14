@@ -5,7 +5,13 @@ tensorboard/
 *$py.class
 node_modules
 yarn-error.log
-.vacode
+.vscode
+# remote pytest related
+*.out
+*.err
+prof/
+# mpid related
+mpidplugin.i
 # C extensions
 *.so
 # Distribution / packaging
