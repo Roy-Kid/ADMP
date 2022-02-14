@@ -216,7 +216,7 @@ class ADMPPmeGenerator:
             "kx": [],
             "ky": [],
         }
-        self.params = {
+        self._input_params = {
             "c0": [],
             "dX": [],
             "dY": [],
@@ -241,40 +241,39 @@ class ADMPPmeGenerator:
         self._jaxPotential = None
         self.types = []
         self.ethresh = 1.0e-5
+        self.params = {}
 
-    def registerAtomType(self, atom):
-        self.types.append(atom["type"])
-        del atom["type"]
+    def registerAtomType(self, atom:dict):
+        
+        self.types.append(atom.pop("type"))
 
         kStrings = ["kz", "kx", "ky"]
         for kString in kStrings:
             if kString in atom:
-                self.kStrings[kString].append(atom[kString])
-                del atom[kString]
+                self.kStrings[kString].append(atom.pop(kString))
             else:
                 self.kStrings[kString].append("")
 
         for k, v in atom.items():
-            self.params[k].append(float(v))
+            self._input_params[k].append(float(v))
 
     @staticmethod
     def parseElement(element, hamiltonian):
         generator = ADMPPmeGenerator(hamiltonian)
-        generator.kappa = float(element.attrib["kappa"])
-        generator.pme_order = float(element.attrib["pme_order"])
-        generator.lmax = int(element.attrib["lmax"])
+        generator.lmax = int(element.attrib.get('lmax'))
+        
         hamiltonian.registerGenerator(generator)
 
         mScales = []
         for i in range(2, 7):
             mScales.append(float(element.attrib["mScale1%d" % i]))
-        generator.params["mScales"] = mScales
+        generator.params["mScales"] = jnp.array(mScales)
 
         for atomType in element.findall("Atom"):
             generator.registerAtomType(atomType.attrib)
 
-        for k in generator.params.keys():
-            generator.params[k] = jnp.array(generator.params[k])
+        for k in generator._input_params.keys():
+            generator._input_params[k] = jnp.array(generator._input_params[k])
         generator.types = np.array(generator.types)
 
     def createForce(self, system, data, nonbondedMethod, nonbondedCutoff, args):
@@ -287,7 +286,7 @@ class ADMPPmeGenerator:
             map_atomtype[i] = np.where(self.types == atype)[0][0]
         
         # map atom multipole moments
-        q = self.params
+        q = self._input_params
         Q = np.zeros((n_atoms, 10))
         Q[:, 0] = q["c0"][map_atomtype]
         Q[:, 1] = q["dX"][map_atomtype] * 10
@@ -300,13 +299,14 @@ class ADMPPmeGenerator:
         Q[:, 8] = q["qXZ"][map_atomtype] * 300
         Q[:, 9] = q["qYZ"][map_atomtype] * 300
 
+        # add all differentiable params to self.params
         Q = jnp.array(Q)
-        self.params["Q"] = Q
         Q_local = convert_cart2harm(Q, 2)
         self.params["Q_local"] = Q_local
         # here box is only used to setup ewald parameters, no need to be differentiable
         a, b, c = system.getDefaultPeriodicBoxVectors()
         box = jnp.array([a._value, b._value, c._value]) * 10
+        self.params['box'] = box
         # get the admp calculator
         rc = nonbondedCutoff.value_in_unit(unit.angstrom)
 
@@ -345,13 +345,12 @@ class ADMPPmeGenerator:
             self.lmax,
         )
 
-        # positions, box, pairs, Q_local, mScales
         def potential_fn(positions, box, pairs, params):
 
             mScales = params["mScales"]
             Q_local = params["Q_local"]
 
-            # return positions, box, pairs, Q_local, mScales
+            # positions, box, pairs, Q_local, mScales
             return pme_force.get_energy(positions, box, pairs, Q_local, mScales)
 
         self._jaxPotential = potential_fn
