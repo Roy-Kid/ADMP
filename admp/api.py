@@ -306,7 +306,7 @@ class ADMPPmeGenerator:
         # here box is only used to setup ewald parameters, no need to be differentiable
         a, b, c = system.getDefaultPeriodicBoxVectors()
         box = jnp.array([a._value, b._value, c._value]) * 10
-        self.params['box'] = box
+
         # get the admp calculator
         rc = nonbondedCutoff.value_in_unit(unit.angstrom)
 
