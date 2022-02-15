@@ -39,7 +39,7 @@ class ADMPPmeForce:
         self.axis_indices = axis_indices
         self.rc = rc
         self.ethresh = ethresh
-        self.lmax = lmax
+        self.lmax = int(lmax)  # jichen: type checking
         kappa, K1, K2, K3 = setup_ewald_parameters(rc, ethresh, box)
         self.kappa = kappa
         self.K1 = K1
