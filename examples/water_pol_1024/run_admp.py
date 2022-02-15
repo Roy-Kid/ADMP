@@ -137,10 +137,10 @@ if __name__ == '__main__':
     print('# Electrostatic Energy (kJ/mol)')
     # E = pme_force.get_energy(positions, box, pairs, Q_local, mScales, pScales, dScales)
     E, F = pme_force.get_forces(positions, box, pairs, Q_local, pol, tholes, mScales, pScales, dScales, U_init=pme_force.U_ind)
-
+    print(E)
     U_ind = pme_force.U_ind
     # compare U_ind with reference
-    for i in range(1024):
-        for j in range(3):
-            print(Uind_global[i*3, j], Uind_global[i*3, j], U_ind[i*3, j])
+    # for i in range(1024):
+    #     for j in range(3):
+    #         print(Uind_global[i*3, j], Uind_global[i*3, j], U_ind[i*3, j])
 

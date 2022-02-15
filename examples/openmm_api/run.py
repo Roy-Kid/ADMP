@@ -17,10 +17,13 @@ if __name__ == '__main__':
     app.Topology.loadBondDefinitions("residues.xml")
     pdb = app.PDBFile("water1024.pdb")
     rc = 4.0
-    potentials = H.createPotential(pdb.topology, nonbondedCutoff=rc*unit.angstrom)
     # generator stores all force field parameters
-    # pot_fn is the actual energy calculator
     generator = H.getGenerators()
+    disp_generator = generator[0]
+    pme_generator = generator[1]
+    pme_generator.ref_dip = 'dipole_1024'
+    potentials = H.createPotential(pdb.topology, nonbondedCutoff=rc*unit.angstrom)
+    # pot_fn is the actual energy calculator
     pot_disp = potentials[0]
     pot_pme = potentials[1]
 
@@ -34,11 +37,11 @@ if __name__ == '__main__':
     nbr = neighbor_list_fn.allocate(positions)
     pairs = nbr.idx.T
 
-    print(pot_disp(positions, box, pairs, generator[0].params))
+    print(pot_disp(positions, box, pairs, disp_generator.params))
     param_grad = grad(pot_disp, argnums=3)(positions, box, pairs, generator[0].params)
     print(param_grad['mScales'])
     
-    print(pot_pme(positions, box, pairs, generator[1].params))
+    print(pot_pme(positions, box, pairs, pme_generator.params))
     param_grad = grad(pot_pme, argnums=3)(positions, box, pairs, generator[1].params)
     print(param_grad['mScales'])
 

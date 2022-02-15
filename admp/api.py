@@ -14,6 +14,11 @@ from admp.spatial import generate_construct_local_frames
 from admp.recip import Ck_1, generate_pme_recip
 from jax_md import space, partition
 from jax import grad
+import linecache
+
+
+def get_line_context(file_path, line_number):
+    return linecache.getline(file_path,line_number).strip()
 
 
 def build_covalent_map(data, max_neighbor):
@@ -237,11 +242,19 @@ class ADMPPmeGenerator:
             "oXZZ": [],
             "oYZZ": [],
             "oZZZ": [],
+            "thole": [],
+            "polarizabilityXX": [],
+            "polarizabilityYY": [],
+            "polarizabilityZZ": []
         }
+        # if more or optional input params
+        # self._input_params = defaultDict(list) 
         self._jaxPotential = None
         self.types = []
         self.ethresh = 1.0e-5
         self.params = {}
+        self.lpol = False
+        self.ref_dip = ''
 
     def registerAtomType(self, atom:dict):
         
@@ -261,16 +274,32 @@ class ADMPPmeGenerator:
     def parseElement(element, hamiltonian):
         generator = ADMPPmeGenerator(hamiltonian)
         generator.lmax = int(element.attrib.get('lmax'))
+        generator.pmax = int(element.attrib.get('pmax'))
         
         hamiltonian.registerGenerator(generator)
 
         mScales = []
+        pScales = []
+        dScales = []
         for i in range(2, 7):
             mScales.append(float(element.attrib["mScale1%d" % i]))
+            pScales.append(float(element.attrib["pScale1%d" % i]))
+            dScales.append(float(element.attrib["dScale1%d" % i]))
         generator.params["mScales"] = jnp.array(mScales)
+        generator.params["pScales"] = jnp.array(pScales)
+        generator.params["dScales"] = jnp.array(dScales)
+        
+        if element.findall('Polarize'):
+            generator.lpol = True
 
         for atomType in element.findall("Atom"):
-            generator.registerAtomType(atomType.attrib)
+            atomAttrib = atomType.attrib
+            for polarInfo in element.findall("Polarize"):
+                polarAttrib = polarInfo.attrib
+                if polarInfo.attrib['type'] == atomAttrib['type']:
+                    atomAttrib.update(polarAttrib)
+                    break
+            generator.registerAtomType(atomAttrib)
 
         for k in generator._input_params.keys():
             generator._input_params[k] = jnp.array(generator._input_params[k])
@@ -286,19 +315,72 @@ class ADMPPmeGenerator:
             map_atomtype[i] = np.where(self.types == atype)[0][0]
         
         # map atom multipole moments
-        q = self._input_params
+        p = self._input_params
         Q = np.zeros((n_atoms, 10))
-        Q[:, 0] = q["c0"][map_atomtype]
-        Q[:, 1] = q["dX"][map_atomtype] * 10
-        Q[:, 2] = q["dY"][map_atomtype] * 10
-        Q[:, 3] = q["dZ"][map_atomtype] * 10
-        Q[:, 4] = q["qXX"][map_atomtype] * 300
-        Q[:, 5] = q["qYY"][map_atomtype] * 300
-        Q[:, 6] = q["qZZ"][map_atomtype] * 300
-        Q[:, 7] = q["qXY"][map_atomtype] * 300
-        Q[:, 8] = q["qXZ"][map_atomtype] * 300
-        Q[:, 9] = q["qYZ"][map_atomtype] * 300
-
+        Q[:, 0] = p["c0"][map_atomtype]
+        Q[:, 1] = p["dX"][map_atomtype] * 10
+        Q[:, 2] = p["dY"][map_atomtype] * 10
+        Q[:, 3] = p["dZ"][map_atomtype] * 10
+        Q[:, 4] = p["qXX"][map_atomtype] * 300
+        Q[:, 5] = p["qYY"][map_atomtype] * 300
+        Q[:, 6] = p["qZZ"][map_atomtype] * 300
+        Q[:, 7] = p["qXY"][map_atomtype] * 300
+        Q[:, 8] = p["qXZ"][map_atomtype] * 300
+        Q[:, 9] = p["qYZ"][map_atomtype] * 300
+        
+        # map polarization-related params
+        pol = jnp.vstack((p['polarizabilityXX'][map_atomtype], p['polarizabilityYY'][map_atomtype], p['polarizabilityZZ'][map_atomtype])).T.astype(jnp.float32)
+        pol = 1000*jnp.mean(pol,axis=1)
+        self.params['pol'] = pol
+        
+        tholes = jnp.array(p['thole'][map_atomtype]).astype(jnp.float32)
+        tholes = jnp.mean(jnp.atleast_2d(tholes), axis=1)
+        self.params['tholes'] = tholes
+        
+        # defaultTholeWidth = 8
+        Uind_global = jnp.zeros([n_atoms,3])
+        ref_dip = self.ref_dip
+        for i in range(n_atoms):
+            a = get_line_context(ref_dip, i+1)
+            b = a.split()
+            t = np.array([10*float(b[0]),10*float(b[1]),10*float(b[2])])
+            Uind_global = Uind_global.at[i].set(t)
+            
+        # construct the C list
+        c_list = np.zeros((3, n_atoms))
+        a_list = np.zeros(n_atoms)
+        q_list = np.zeros(n_atoms)
+        b_list = np.zeros(n_atoms)
+        
+        
+        nmol=int(n_atoms/3) # WARNING: HARD CODE!
+        for i in range(nmol):
+            a = i*3
+            b = i*3+1
+            c = i*3+2
+            # dispersion coeff
+            c_list[0][a]=37.19677405
+            c_list[0][b]=7.6111103
+            c_list[0][c]=7.6111103
+            c_list[1][a]=85.26810658
+            c_list[1][b]=11.90220148
+            c_list[1][c]=11.90220148
+            c_list[2][a]=134.44874488
+            c_list[2][b]=15.05074749
+            c_list[2][c]=15.05074749
+            # q
+            q_list[a] = -0.741706
+            q_list[b] = 0.370853
+            q_list[c] = 0.370853
+            # b, Bohr^-1
+            b_list[a] = 2.00095977
+            b_list[b] = 1.999519942
+            b_list[c] = 1.999519942
+            # a, Hartree
+            a_list[a] = 458.3777
+            a_list[b] = 0.0317
+            a_list[c] = 0.0317
+        
         # add all differentiable params to self.params
         Q = jnp.array(Q)
         Q_local = convert_cart2harm(Q, 2)
@@ -335,6 +417,15 @@ class ADMPPmeGenerator:
             map_axis_indices.append(atom_indices)
 
         self.axis_indices = np.array(map_axis_indices)
+        
+        # Finish data preparation
+        # -------------------------------------------------------------------------------------
+        # parameters should be ready: 
+        # geometric variables: positions, box
+        # atomic parameters: Q_local, c_list
+        # topological parameters: covalent_map, mScales, pScales, dScales
+        # general force field setting parameters: rc, ethresh, lmax, pmax
+        
         pme_force = ADMPPmeForce(
             box,
             self.axis_types,
@@ -343,15 +434,25 @@ class ADMPPmeGenerator:
             rc,
             self.ethresh,
             self.lmax,
+            self.lpol
         )
+        self.params['U_ind'] = pme_force.U_ind
+
 
         def potential_fn(positions, box, pairs, params):
 
             mScales = params["mScales"]
             Q_local = params["Q_local"]
+            
 
             # positions, box, pairs, Q_local, mScales
-            return pme_force.get_energy(positions, box, pairs, Q_local, mScales)
+            if self.lpol:
+                pScales = params["pScales"]
+                dScales = params["dScales"]
+                U_ind = params["U_ind"]
+                return pme_force.get_energy(positions, box, pairs, Q_local, pol, tholes, mScales, pScales, dScales, U_init=U_ind)
+            else: 
+                return pme_force.get_energy(positions, box, pairs, Q_local, mScales)
 
         self._jaxPotential = potential_fn
 
